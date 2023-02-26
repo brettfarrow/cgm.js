@@ -1,0 +1,24 @@
+{
+  "name": "cgm.js",
+  "version": "0.2.0",
+  "description": "JavaScript port of pydexcom to allow use easy use of the Dexcom Share service",
+  "main": "cgm.js",
+  "dependencies": {
+    "isomorphic-fetch": "^3.0.0"
+  },
+  "devDependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/brettfarrow/cgm.js.git"
+  },
+  "keywords": [
+    "cgm",
+    "dexcom"
+  ],
+  "author": "Brett Farrow",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/brettfarrow/cgm.js/issues"
+  },
+  "homepage": "https://github.com/brettfarrow/cgm.js#readme"
+}
