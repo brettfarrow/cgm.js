@@ -6,7 +6,21 @@ A JavaScript port of [pydexcom](https://github.com/gagebenne/pydexcom)
 
 This has been tested from Node 14 to Node 18, but may work in earlier versions as well.
 
-## Usage (Single Reading)
+## Usage
+
+### Importing
+
+```js
+const Dexcom = require("cgm.js");
+```
+
+For ESM, set `"type": "module",` in your `package.json`.
+
+```js
+import Dexcom from "cgm.js";
+```
+
+### Get Single Reading
 
 Most recent reading:
 
@@ -32,7 +46,7 @@ GlucoseReading {
 }
 ```
 
-## Usage (Multiple Readings)
+### Get Multiple Readings
 
 ```js
 const dexcom = new Dexcom("user", "pass");
