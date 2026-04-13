@@ -27,7 +27,7 @@ The main class for communicating with the Dexcom Share API.
 #### Constructor
 
 ```js
-const { Dexcom, Region } = require("cgm.js");
+import { Dexcom, Region } from "cgm.js";
 
 const dexcom = new Dexcom({ username, password, region });
 ```
@@ -217,7 +217,7 @@ console.log(`${reading}`); // "120"
 Determines which Dexcom Share regional server to use.
 
 ```js
-const { Region } = require("cgm.js");
+import { Region } from "cgm.js";
 ```
 
 | Value | String | Base URL |
@@ -283,7 +283,7 @@ Error enums are frozen objects whose values are the human-readable error message
 All error classes extend `DexcomError`, which extends the built-in `Error`. This allows you to catch all library errors with a single `catch` or be specific.
 
 ```js
-const { DexcomError, AccountError, AccountErrorEnum } = require("cgm.js/errors");
+import { DexcomError, AccountError, AccountErrorEnum } from "cgm.js/errors";
 
 try {
   await dexcom.getGlucoseReadings();
@@ -336,7 +336,7 @@ Errors related to unexpected or malformed responses from the Dexcom Share API (i
 
 ## Constants
 
-Available from `require("cgm.js/constants")`.
+Available from `import { ... } from "cgm.js/constants"`.
 
 | Constant | Type | Value | Description |
 |----------|------|-------|-------------|
