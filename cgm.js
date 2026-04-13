@@ -51,6 +51,10 @@ class GlucoseReading {
           ) || "None";
       }
 
+      if (isNaN(this._value)) {
+        throw new Error("Invalid glucose value");
+      }
+
       const match = jsonGlucoseReading.DT.match(/Date\((\d+)([+-]\d{4})\)/);
       if (match) {
         this._time = new Date(parseInt(match[1], 10));

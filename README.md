@@ -1,93 +1,169 @@
 # cgm.js
 
-A JavaScript port of [pydexcom](https://github.com/gagebenne/pydexcom)
+A JavaScript library for the Dexcom Share API. Port of [pydexcom](https://github.com/gagebenne/pydexcom).
 
 ## Requirements
 
-This has been tested from Node 14 to Node 18, but may work in earlier versions as well.
+Node.js 14 or later.
+
+## Installation
+
+```bash
+npm install cgm.js
+```
+
+## Quick Start
+
+```js
+const { Dexcom, Region } = require("cgm.js");
+
+async function main() {
+  const dexcom = new Dexcom({ username: "username", password: "password" });
+  const reading = await dexcom.getCurrentGlucoseReading();
+
+  console.log(reading.value);            // 120
+  console.log(reading.mmolL);            // 6.7
+  console.log(reading.trendDirection);   // "Flat"
+  console.log(reading.trendDescription); // "steady"
+  console.log(reading.trendArrow);       // "→"
+  console.log(reading.time);             // 2025-08-07T20:40:58.000Z
+}
+
+main();
+```
 
 ## Usage
 
 ### Importing
 
 ```js
-const Dexcom = require("cgm.js");
+const { Dexcom, Region } = require("cgm.js");
 ```
 
-For ESM, set `"type": "module",` in your `package.json`.
+### Authentication
+
+By username (email, phone number, or account name):
 
 ```js
-import Dexcom from "cgm.js";
+const dexcom = new Dexcom({ username: "user@email.com", password: "password" });
+const dexcom = new Dexcom({ username: "+11234567890", password: "password" });
 ```
 
-### Get Single Reading
-
-Most recent reading:
+By account ID (found in the URL after logging in to Dexcom Account Management):
 
 ```js
-const dexcom = new Dexcom("user", "pass");
-const latestGlucoseReading = await dexcom.getLatestGlucoseReading();
+const dexcom = new Dexcom({ accountId: "12345678-90ab-cdef-1234-567890abcdef", password: "password" });
 ```
 
-`getCurrentGlucoseReading()` should return the same result but is maintained for parity with the original package.
-
-### Example Output
+### Regions
 
 ```js
-GlucoseReading {
-    value: 143,
-    mgdL: 143,
-    mmolL: 7.9,
-    trend: 4,
-    trendDescription: 'steady',
-    trendArrow: '→',
-    time: 2023-02-26T00:48:54.000Z,
-    json: { WT: 'Date(1677372534000)', Value: 143, Trend: 'Flat' }
-}
+// United States (default)
+const dexcom = new Dexcom({ username: "user", password: "pass" });
+const dexcom = new Dexcom({ username: "user", password: "pass", region: Region.US });
+
+// Outside US
+const dexcom = new Dexcom({ username: "user", password: "pass", region: Region.OUS });
+
+// Japan
+const dexcom = new Dexcom({ username: "user", password: "pass", region: Region.JP });
 ```
+
+### Get a Single Reading
+
+```js
+// Most recent reading within the last 10 minutes
+const current = await dexcom.getCurrentGlucoseReading();
+
+// Most recent reading within the last 5 minutes
+const latest = await dexcom.getLatestGlucoseReading();
+```
+
+Both return a single `GlucoseReading` or `null` if no reading is available in the time window.
 
 ### Get Multiple Readings
 
 ```js
-const dexcom = new Dexcom("user", "pass");
-const glucoseReadings = await dexcom.getGlucoseReadings(15, 3); // minutes and number of readings readings
+// Last 24 hours of readings (defaults)
+const readings = await dexcom.getGlucoseReadings();
+
+// Last 60 minutes, up to 12 readings
+const readings = await dexcom.getGlucoseReadings(60, 12);
+
+// Last 24 hours of readings, convenience method
+const readings = await dexcom.getLatestGlucoseReadings();
+
+// Last 24 hours, up to 5 readings
+const readings = await dexcom.getLatestGlucoseReadings(5);
 ```
 
-The service will return the minimum of the two parameters (`minutes` and `maxCount` of readings), so if your readings take place every five minutes and you request `30` minutes and `3` readings, you will only see three readings returned.
+The API returns the minimum of the two parameters (`minutes` and `maxCount`), so if readings occur every 5 minutes and you request 30 minutes with `maxCount: 3`, you'll get 3 readings.
 
-### Example Output
+### GlucoseReading Properties
 
 ```js
-[
-  GlucoseReading {
-    value: 112,
-    mgdL: 112,
-    mmolL: 6.2,
-    trend: 3,
-    trendDescription: 'rising slightly',
-    trendArrow: '↗',
-    time: 2023-02-27T03:23:59.000Z,
-    json: { WT: 'Date(1677468239000)', Value: 112, Trend: 'FortyFiveUp' }
-  },
-  GlucoseReading {
-    value: 105,
-    mgdL: 105,
-    mmolL: 5.8,
-    trend: 3,
-    trendDescription: 'rising slightly',
-    trendArrow: '↗',
-    time: 2023-02-27T03:18:59.000Z,
-    json: { WT: 'Date(1677467939000)', Value: 105, Trend: 'FortyFiveUp' }
-  },
-  GlucoseReading {
-    value: 93,
-    mgdL: 93,
-    mmolL: 5.2,
-    trend: 4,
-    trendDescription: 'steady',
-    trendArrow: '→',
-    time: 2023-02-27T03:14:00.000Z,
-    json: { WT: 'Date(1677467640000)', Value: 93, Trend: 'Flat' }
-  },
-]
+const reading = await dexcom.getCurrentGlucoseReading();
+
+reading.value            // 120 (mg/dL)
+reading.mgdL             // 120 (alias for value)
+reading.mmolL            // 6.7 (converted)
+reading.trend            // 4 (numeric code)
+reading.trendDirection   // "Flat" (raw API string)
+reading.trendDescription // "steady"
+reading.trendArrow       // "→"
+reading.time             // Date object
+reading.json             // raw API response object
 ```
+
+### Error Handling
+
+```js
+const { AccountError, SessionError, ArgumentError, ServerError, DexcomError } = require("cgm.js/errors");
+const { AccountErrorEnum } = require("cgm.js/errors");
+
+try {
+  const dexcom = new Dexcom({ username: "user", password: "pass" });
+  const reading = await dexcom.getCurrentGlucoseReading();
+} catch (error) {
+  if (error instanceof AccountError) {
+    if (error.enum === AccountErrorEnum.MAX_ATTEMPTS) {
+      console.log("Too many attempts, try again later");
+    } else {
+      console.log("Authentication failed:", error.message);
+    }
+  } else if (error instanceof ServerError) {
+    console.log("Server error:", error.message);
+  } else if (error instanceof DexcomError) {
+    console.log("Dexcom error:", error.message);
+  }
+}
+```
+
+## API Documentation
+
+See [API.md](API.md) for complete API reference including all classes, methods, enums, constants, and error types.
+
+## Tests
+
+```bash
+npm test                # run tests
+npm run test:coverage   # run tests with coverage report
+```
+
+## Troubleshooting
+
+**Why is my password not working?**
+
+1. Verify your credentials at your region's Dexcom Account Management site:
+   - US: [uam1.dexcom.com](https://uam1.dexcom.com)
+   - Outside US: [uam2.dexcom.com](https://uam2.dexcom.com)
+   - Japan: [uam.dexcom.jp](https://uam.dexcom.jp)
+2. Make sure you're using the correct `region` parameter.
+3. Format phone numbers with country code: `"+11234567890"`.
+4. Use *your* Dexcom Share credentials, not the follower's.
+5. Ensure at least one follower is set up on Dexcom Share.
+6. Try authenticating with your `accountId` instead of `username`.
+
+## License
+
+MIT

@@ -6,7 +6,13 @@
   "dependencies": {
     "isomorphic-fetch": "^3.0.0"
   },
-  "devDependencies": {},
+  "scripts": {
+    "test": "jest",
+    "test:coverage": "jest --coverage"
+  },
+  "devDependencies": {
+    "jest": "^30.3.0"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/brettfarrow/cgm.js.git"
