@@ -1,6 +1,6 @@
 {
   "name": "cgm.js",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "description": "JavaScript port of pydexcom to allow use easy use of the Dexcom Share service",
   "main": "cgm.js",
   "dependencies": {

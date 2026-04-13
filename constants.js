@@ -1,52 +1,48 @@
-// Dexcom Share API base urls
-const DEXCOM_BASE_URL = "https://share2.dexcom.com/ShareWebServices/Services";
+const Region = Object.freeze({
+  US: "us",
+  OUS: "ous",
+  JP: "jp",
+});
+
+// Per-region Dexcom Share API application IDs
+const DEXCOM_APPLICATION_ID_US = "d89443d2-327c-4a6f-89e5-496bbb0317db";
+const DEXCOM_APPLICATION_ID_OUS = DEXCOM_APPLICATION_ID_US;
+const DEXCOM_APPLICATION_ID_JP = "d8665ade-9673-4e27-9ff6-92db4ce13d13";
+
+const DEXCOM_APPLICATION_IDS = Object.freeze({
+  [Region.US]: DEXCOM_APPLICATION_ID_US,
+  [Region.OUS]: DEXCOM_APPLICATION_ID_OUS,
+  [Region.JP]: DEXCOM_APPLICATION_ID_JP,
+});
+
+// Per-region Dexcom Share API base URLs
+const DEXCOM_BASE_URL =
+  "https://share2.dexcom.com/ShareWebServices/Services/";
 const DEXCOM_BASE_URL_OUS =
-  "https://shareous1.dexcom.com/ShareWebServices/Services";
+  "https://shareous1.dexcom.com/ShareWebServices/Services/";
+const DEXCOM_BASE_URL_JP =
+  "https://share.dexcom.jp/ShareWebServices/Services/";
+
+const DEXCOM_BASE_URLS = Object.freeze({
+  [Region.US]: DEXCOM_BASE_URL,
+  [Region.OUS]: DEXCOM_BASE_URL_OUS,
+  [Region.JP]: DEXCOM_BASE_URL_JP,
+});
 
 // Dexcom Share API endpoints
 const DEXCOM_LOGIN_ID_ENDPOINT = "General/LoginPublisherAccountById";
 const DEXCOM_AUTHENTICATE_ENDPOINT = "General/AuthenticatePublisherAccount";
-const DEXCOM_VERIFY_SERIAL_NUMBER_ENDPOINT =
-  "Publisher/CheckMonitoredReceiverAssignmentStatus";
 const DEXCOM_GLUCOSE_READINGS_ENDPOINT =
   "Publisher/ReadPublisherLatestGlucoseValues";
 
-const DEXCOM_APPLICATION_ID = "d89443d2-327c-4a6f-89e5-496bbb0317db";
+// Headers for all Dexcom Share API requests
+const HEADERS = Object.freeze({
+  "Content-Type": "application/json",
+  "Accept-Encoding": "application/json",
+});
 
-// Dexcom error strings
-const ACCOUNT_ERROR_USERNAME_NULL_EMPTY = "Username null or empty";
-const ACCOUNT_ERROR_PASSWORD_NULL_EMPTY = "Password null or empty";
-const SESSION_ERROR_ACCOUNT_ID_NULL_EMPTY = "Accound ID null or empty";
-const SESSION_ERROR_ACCOUNT_ID_DEFAULT = "Accound ID default";
-const ACCOUNT_ERROR_ACCOUNT_NOT_FOUND = "Account not found";
-const ACCOUNT_ERROR_PASSWORD_INVALID = "Password not valid";
-const ACCOUNT_ERROR_MAX_ATTEMPTS = "Maximum authentication attempts exceeded";
-const ACCOUNT_ERROR_UNKNOWN = "Account error";
-
-const SESSION_ERROR_SESSION_ID_NULL = "Session ID null";
-const SESSION_ERROR_SESSION_ID_DEFAULT = "Session ID default";
-const SESSION_ERROR_SESSION_NOT_VALID = "Session ID not valid";
-const SESSION_ERROR_SESSION_NOT_FOUND = "Session ID not found";
-
-const ARGUMENT_ERROR_MINUTES_INVALID = "Minutes must be between 1 and 1440";
-const ARGUMENT_ERROR_MAX_COUNT_INVALID = "Max count must be between 1 and 288";
-const ARGUMENT_ERROR_SERIAL_NUMBER_NULL_EMPTY = "Serial number null or empty";
-
-// Other
-const DEXCOM_TREND_DESCRIPTIONS = [
-  "",
-  "rising quickly",
-  "rising",
-  "rising slightly",
-  "steady",
-  "falling slightly",
-  "falling",
-  "falling quickly",
-  "unable to determine trend",
-  "trend unavailable",
-];
-
-const DEXCOM_TREND_DIRECTIONS = {
+// Trend directions returned by the Dexcom Share API mapped to integers
+const DEXCOM_TREND_DIRECTIONS = Object.freeze({
   None: 0, // unconfirmed
   DoubleUp: 1,
   SingleUp: 2,
@@ -57,40 +53,61 @@ const DEXCOM_TREND_DIRECTIONS = {
   DoubleDown: 7,
   NotComputable: 8, // unconfirmed
   RateOutOfRange: 9, // unconfirmed
-};
+});
 
-const DEXCOM_TREND_ARROWS = ["", "↑↑", "↑", "↗", "→", "↘", "↓", "↓↓", "?", "-"];
+// Trend descriptions ordered identically to DEXCOM_TREND_DIRECTIONS
+const TREND_DESCRIPTIONS = Object.freeze([
+  "",
+  "rising quickly",
+  "rising",
+  "rising slightly",
+  "steady",
+  "falling slightly",
+  "falling",
+  "falling quickly",
+  "unable to determine trend",
+  "trend unavailable",
+]);
 
-const DEFAULT_SESSION_ID = "00000000-0000-0000-0000-000000000000";
+// Trend arrows ordered identically to DEXCOM_TREND_DIRECTIONS
+const TREND_ARROWS = Object.freeze([
+  "",
+  "\u2191\u2191",
+  "\u2191",
+  "\u2197",
+  "\u2192",
+  "\u2198",
+  "\u2193",
+  "\u2193\u2193",
+  "?",
+  "-",
+]);
 
-const MMOL_L_CONVERTION_FACTOR = 0.0555;
+// UUID consisting of all zeros, likely error if returned by Dexcom Share API
+const DEFAULT_UUID = "00000000-0000-0000-0000-000000000000";
+
+// Maximum minutes to use when retrieving glucose values (1 day)
+const MAX_MINUTES = 1440;
+
+// Maximum count to use when retrieving glucose values (1 reading per 5 minutes)
+const MAX_MAX_COUNT = 288;
+
+// Conversion factor between mg/dL and mmol/L
+const MMOL_L_CONVERSION_FACTOR = 0.0555;
 
 module.exports = {
-  DEXCOM_BASE_URL,
-  DEXCOM_BASE_URL_OUS,
+  Region,
+  DEXCOM_APPLICATION_IDS,
+  DEXCOM_BASE_URLS,
   DEXCOM_LOGIN_ID_ENDPOINT,
   DEXCOM_AUTHENTICATE_ENDPOINT,
-  DEXCOM_VERIFY_SERIAL_NUMBER_ENDPOINT,
   DEXCOM_GLUCOSE_READINGS_ENDPOINT,
-  DEXCOM_APPLICATION_ID,
-  ACCOUNT_ERROR_USERNAME_NULL_EMPTY,
-  ACCOUNT_ERROR_PASSWORD_NULL_EMPTY,
-  SESSION_ERROR_ACCOUNT_ID_NULL_EMPTY,
-  SESSION_ERROR_ACCOUNT_ID_DEFAULT,
-  ACCOUNT_ERROR_ACCOUNT_NOT_FOUND,
-  ACCOUNT_ERROR_PASSWORD_INVALID,
-  ACCOUNT_ERROR_MAX_ATTEMPTS,
-  ACCOUNT_ERROR_UNKNOWN,
-  SESSION_ERROR_SESSION_ID_NULL,
-  SESSION_ERROR_SESSION_ID_DEFAULT,
-  SESSION_ERROR_SESSION_NOT_VALID,
-  SESSION_ERROR_SESSION_NOT_FOUND,
-  ARGUMENT_ERROR_MINUTES_INVALID,
-  ARGUMENT_ERROR_MAX_COUNT_INVALID,
-  ARGUMENT_ERROR_SERIAL_NUMBER_NULL_EMPTY,
-  DEXCOM_TREND_DESCRIPTIONS,
+  HEADERS,
   DEXCOM_TREND_DIRECTIONS,
-  DEXCOM_TREND_ARROWS,
-  DEFAULT_SESSION_ID,
-  MMOL_L_CONVERTION_FACTOR,
+  TREND_DESCRIPTIONS,
+  TREND_ARROWS,
+  DEFAULT_UUID,
+  MAX_MINUTES,
+  MAX_MAX_COUNT,
+  MMOL_L_CONVERSION_FACTOR,
 };
