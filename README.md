@@ -4,7 +4,7 @@ A JavaScript library for the Dexcom Share API. Port of [pydexcom](https://github
 
 ## Requirements
 
-Node.js 14 or later.
+Node.js 18 or later.
 
 ## Installation
 

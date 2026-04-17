@@ -1,5 +1,5 @@
 const mockFetch = jest.fn();
-jest.mock("isomorphic-fetch", () => mockFetch);
+global.fetch = mockFetch;
 
 const { Dexcom, GlucoseReading, Region } = require("../cgm");
 const {

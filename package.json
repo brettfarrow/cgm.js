@@ -3,15 +3,15 @@
   "version": "1.0.0",
   "description": "JavaScript port of pydexcom to allow use easy use of the Dexcom Share service",
   "main": "cgm.js",
-  "dependencies": {
-    "isomorphic-fetch": "^3.0.0"
-  },
   "scripts": {
     "test": "jest",
     "test:coverage": "jest --coverage"
   },
   "devDependencies": {
     "jest": "^30.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "repository": {
     "type": "git",

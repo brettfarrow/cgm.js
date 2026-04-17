@@ -1,5 +1,3 @@
-const fetch = require("isomorphic-fetch");
-
 const {
   Region,
   DEXCOM_APPLICATION_IDS,
