@@ -1,12 +1,18 @@
 {
   "name": "cgm.js",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "description": "JavaScript port of pydexcom to allow use easy use of the Dexcom Share service",
   "main": "cgm.js",
   "dependencies": {
     "isomorphic-fetch": "^3.0.0"
   },
-  "devDependencies": {},
+  "scripts": {
+    "test": "jest",
+    "test:coverage": "jest --coverage"
+  },
+  "devDependencies": {
+    "jest": "^30.3.0"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/brettfarrow/cgm.js.git"
