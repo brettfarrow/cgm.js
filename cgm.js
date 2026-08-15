@@ -13,6 +13,9 @@ const {
   MAX_MINUTES,
   MAX_MAX_COUNT,
   MMOL_L_CONVERSION_FACTOR,
+  MAX_POST_ATTEMPTS,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  BASE_RETRY_DELAY_MS,
 } = require("./constants.js");
 
 const {
@@ -33,29 +36,124 @@ function validUuid(uuid) {
   );
 }
 
+function abortError(signal) {
+  if (signal && signal.reason !== undefined) return signal.reason;
+  return new DOMException("The operation was aborted", "AbortError");
+}
+
+function throwIfAborted(signal) {
+  if (signal && signal.aborted) throw abortError(signal);
+}
+
+function sleep(ms, signal) {
+  throwIfAborted(signal);
+
+  return new Promise((resolve, reject) => {
+    let timeoutId;
+
+    function onAbort() {
+      clearTimeout(timeoutId);
+      reject(abortError(signal));
+    }
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+    timeoutId = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+  });
+}
+
+function requestSignal(externalSignal, timeoutMs) {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  if (!externalSignal) return { signal: timeoutSignal, cleanup() {} };
+
+  const controller = new AbortController();
+  const signals = [externalSignal, timeoutSignal];
+  const listeners = signals.map((signal) => {
+    const listener = () => controller.abort(signal.reason);
+    if (signal.aborted) {
+      listener();
+    } else {
+      signal.addEventListener("abort", listener, { once: true });
+    }
+    return { signal, listener };
+  });
+
+  return {
+    signal: controller.signal,
+    cleanup() {
+      for (const entry of listeners) {
+        entry.signal.removeEventListener("abort", entry.listener);
+      }
+    },
+  };
+}
+
+function isRetryableStatus(status) {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+function retryAfterMs(response) {
+  const value = response?.headers?.get?.("retry-after");
+  if (!value) return 0;
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+
+  const date = Date.parse(value);
+  return Number.isNaN(date) ? 0 : Math.max(0, date - Date.now());
+}
+
+function retryDelayMs(attempt, response) {
+  const exponentialDelay = BASE_RETRY_DELAY_MS * 2 ** (attempt - 1);
+  return Math.max(exponentialDelay, retryAfterMs(response));
+}
+
+function parseGlucoseValue(value) {
+  if (Number.isSafeInteger(value) && value > 0) return value;
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    const parsed = Number(value);
+    if (Number.isSafeInteger(parsed) && parsed > 0) return parsed;
+  }
+  throw new Error("Invalid glucose value");
+}
+
 class GlucoseReading {
   constructor(jsonGlucoseReading) {
     try {
-      this._value = parseInt(jsonGlucoseReading.Value, 10);
+      this._value = parseGlucoseValue(jsonGlucoseReading.Value);
       this._trendDirection = jsonGlucoseReading.Trend;
 
       if (typeof this._trendDirection === "string") {
-        this._trend = DEXCOM_TREND_DIRECTIONS[this._trendDirection] || 0;
+        if (Object.hasOwn(DEXCOM_TREND_DIRECTIONS, this._trendDirection)) {
+          this._trend = DEXCOM_TREND_DIRECTIONS[this._trendDirection];
+        } else {
+          this._trend = DEXCOM_TREND_DIRECTIONS.None;
+          this._trendDirection = "None";
+        }
       } else {
-        this._trend = this._trendDirection;
-        this._trendDirection =
-          Object.keys(DEXCOM_TREND_DIRECTIONS).find(
-            (key) => DEXCOM_TREND_DIRECTIONS[key] === this._trend,
-          ) || "None";
+        const direction = Object.keys(DEXCOM_TREND_DIRECTIONS).find(
+          (key) => DEXCOM_TREND_DIRECTIONS[key] === this._trendDirection,
+        );
+        this._trendDirection = direction || "None";
+        this._trend = direction
+          ? DEXCOM_TREND_DIRECTIONS[direction]
+          : DEXCOM_TREND_DIRECTIONS.None;
       }
 
-      if (isNaN(this._value)) {
-        throw new Error("Invalid glucose value");
-      }
-
-      const match = jsonGlucoseReading.DT.match(/Date\((\d+)([+-]\d{4})\)/);
+      const match = jsonGlucoseReading.DT.match(
+        /^Date\((\d+)([+-]\d{4})\)$/,
+      );
       if (match) {
-        this._time = new Date(parseInt(match[1], 10));
+        const timestamp = Number(match[1]);
+        this._time = new Date(timestamp);
+        if (
+          !Number.isSafeInteger(timestamp) ||
+          Number.isNaN(this._time.getTime())
+        ) {
+          throw new Error("Invalid date value");
+        }
       } else {
         throw new Error("Invalid date format");
       }
@@ -106,16 +204,32 @@ class Dexcom {
     username = null,
     accountId = null,
     region = Region.US,
+    requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
   } = {}) {
     this._validateRegion(region);
     this._validateUserIds(accountId, username);
+    this._validateRequestTimeout(requestTimeoutMs);
 
     this._baseUrl = DEXCOM_BASE_URLS[region];
     this._applicationId = DEXCOM_APPLICATION_IDS[region];
-    this._password = password;
     this._username = username;
     this._accountId = accountId;
-    this._sessionId = null;
+    this._requestTimeoutMs = requestTimeoutMs;
+
+    // Keep credentials and bearer-like session IDs out of JSON.stringify(),
+    // console.log(), and structured loggers that enumerate object properties.
+    Object.defineProperties(this, {
+      _password: {
+        value: password,
+        writable: true,
+        enumerable: false,
+      },
+      _sessionId: {
+        value: null,
+        writable: true,
+        enumerable: false,
+      },
+    });
   }
 
   get username() {
@@ -125,7 +239,7 @@ class Dexcom {
     return this._accountId;
   }
 
-  async _post(endpoint, params = null, json = null) {
+  async _post(endpoint, params = null, json = null, { signal } = {}) {
     const url = `${this._baseUrl}${endpoint}`;
 
     let queryString = "";
@@ -133,29 +247,66 @@ class Dexcom {
       queryString = "?" + new URLSearchParams(params).toString();
     }
 
-    let response;
-    try {
-      response = await fetch(`${url}${queryString}`, {
-        method: "POST",
-        headers: HEADERS,
-        body: JSON.stringify(json || {}),
-      });
-    } catch (error) {
-      throw new ServerError(ServerErrorEnum.UNEXPECTED);
-    }
+    // Authentication requests are not replayed automatically because a
+    // dropped response is ambiguous and repeated login attempts can trigger
+    // account throttling. Read requests retry transient failures only.
+    const isAuthentication =
+      endpoint === DEXCOM_AUTHENTICATE_ENDPOINT ||
+      endpoint === DEXCOM_LOGIN_ID_ENDPOINT;
+    const maxAttempts = isAuthentication ? 1 : MAX_POST_ATTEMPTS;
 
-    let responseJson;
-    try {
-      responseJson = await response.json();
-    } catch (error) {
-      throw new ServerError(ServerErrorEnum.INVALID_JSON);
-    }
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      throwIfAborted(signal);
+      const canRetry = attempt < maxAttempts;
+      const attemptSignal = requestSignal(signal, this._requestTimeoutMs);
 
-    if (!response.ok) {
-      throw this._handleErrorCode(responseJson);
-    }
+      let response;
+      try {
+        response = await fetch(`${url}${queryString}`, {
+          method: "POST",
+          headers: HEADERS,
+          body: JSON.stringify(json || {}),
+          signal: attemptSignal.signal,
+        });
+      } catch (error) {
+        attemptSignal.cleanup();
+        throwIfAborted(signal);
+        if (canRetry) {
+          await sleep(retryDelayMs(attempt), signal);
+          continue;
+        }
+        throw new ServerError(ServerErrorEnum.UNEXPECTED, { cause: error });
+      }
 
-    return responseJson;
+      let responseJson;
+      try {
+        responseJson = await response.json();
+      } catch (error) {
+        attemptSignal.cleanup();
+        throwIfAborted(signal);
+        if (canRetry && (response.ok || isRetryableStatus(response.status))) {
+          await sleep(retryDelayMs(attempt, response), signal);
+          continue;
+        }
+        throw new ServerError(ServerErrorEnum.INVALID_JSON, { cause: error });
+      }
+      attemptSignal.cleanup();
+
+      if (!response.ok) {
+        const error = this._handleErrorCode(responseJson);
+        if (
+          canRetry &&
+          error instanceof ServerError &&
+          isRetryableStatus(response.status)
+        ) {
+          await sleep(retryDelayMs(attempt, response), signal);
+          continue;
+        }
+        throw error;
+      }
+
+      return responseJson;
+    }
   }
 
   _handleErrorCode(json) {
@@ -203,6 +354,16 @@ class Dexcom {
   _validateRegion(region) {
     if (!Object.values(Region).includes(region)) {
       throw new ArgumentError(ArgumentErrorEnum.REGION_INVALID);
+    }
+  }
+
+  _validateRequestTimeout(requestTimeoutMs) {
+    if (
+      !Number.isInteger(requestTimeoutMs) ||
+      requestTimeoutMs < 1 ||
+      requestTimeoutMs > 2147483647
+    ) {
+      throw new ArgumentError(ArgumentErrorEnum.REQUEST_TIMEOUT_INVALID);
     }
   }
 
@@ -254,7 +415,7 @@ class Dexcom {
     }
   }
 
-  async createSession() {
+  async createSession({ signal } = {}) {
     this._validatePassword();
 
     if (this._accountId == null) {
@@ -267,21 +428,31 @@ class Dexcom {
           password: this._password,
           applicationId: this._applicationId,
         },
+        { signal },
       );
     }
 
     this._validateAccountId();
 
-    this._sessionId = await this._post(DEXCOM_LOGIN_ID_ENDPOINT, null, {
-      accountId: this._accountId,
-      password: this._password,
-      applicationId: this._applicationId,
-    });
+    this._sessionId = await this._post(
+      DEXCOM_LOGIN_ID_ENDPOINT,
+      null,
+      {
+        accountId: this._accountId,
+        password: this._password,
+        applicationId: this._applicationId,
+      },
+      { signal },
+    );
 
     this._validateSessionId();
   }
 
-  async getGlucoseReadings(minutes = MAX_MINUTES, maxCount = MAX_MAX_COUNT) {
+  async getGlucoseReadings(
+    minutes = MAX_MINUTES,
+    maxCount = MAX_MAX_COUNT,
+    { signal } = {},
+  ) {
     if (!Number.isInteger(minutes) || minutes < 1 || minutes > MAX_MINUTES) {
       throw new ArgumentError(ArgumentErrorEnum.MINUTES_INVALID);
     }
@@ -299,6 +470,8 @@ class Dexcom {
       jsonGlucoseReadings = await this._post(
         DEXCOM_GLUCOSE_READINGS_ENDPOINT,
         { sessionId: this._sessionId, minutes, maxCount },
+        null,
+        { signal },
       );
     } catch (error) {
       if (
@@ -307,10 +480,12 @@ class Dexcom {
           (error.enum === ArgumentErrorEnum.SESSION_ID_INVALID ||
             error.enum === ArgumentErrorEnum.SESSION_ID_DEFAULT))
       ) {
-        await this.createSession();
+        await this.createSession({ signal });
         jsonGlucoseReadings = await this._post(
           DEXCOM_GLUCOSE_READINGS_ENDPOINT,
           { sessionId: this._sessionId, minutes, maxCount },
+          null,
+          { signal },
         );
       } else {
         throw error;
@@ -322,17 +497,17 @@ class Dexcom {
     );
   }
 
-  async getLatestGlucoseReading() {
-    const readings = await this.getGlucoseReadings(5, 1);
+  async getLatestGlucoseReading({ signal } = {}) {
+    const readings = await this.getGlucoseReadings(5, 1, { signal });
     return readings.length > 0 ? readings[0] : null;
   }
 
-  async getLatestGlucoseReadings(maxCount = MAX_MAX_COUNT) {
-    return this.getGlucoseReadings(MAX_MINUTES, maxCount);
+  async getLatestGlucoseReadings(maxCount = MAX_MAX_COUNT, { signal } = {}) {
+    return this.getGlucoseReadings(MAX_MINUTES, maxCount, { signal });
   }
 
-  async getCurrentGlucoseReading() {
-    const readings = await this.getGlucoseReadings(10, 1);
+  async getCurrentGlucoseReading({ signal } = {}) {
+    const readings = await this.getGlucoseReadings(10, 1, { signal });
     return readings.length > 0 ? readings[0] : null;
   }
 }

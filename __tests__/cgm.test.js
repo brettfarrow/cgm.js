@@ -1,6 +1,8 @@
 const mockFetch = jest.fn();
 global.fetch = mockFetch;
 
+const { inspect } = require("node:util");
+
 const { Dexcom, GlucoseReading, Region } = require("../cgm");
 const {
   AccountError,
@@ -21,6 +23,8 @@ const {
   TREND_DESCRIPTIONS,
   TREND_ARROWS,
   MMOL_L_CONVERSION_FACTOR,
+  MAX_POST_ATTEMPTS,
+  DEFAULT_REQUEST_TIMEOUT_MS,
 } = require("../constants");
 
 // --- Helpers ---
@@ -28,10 +32,13 @@ const {
 const VALID_ACCOUNT_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 const VALID_SESSION_ID = "11111111-2222-3333-4444-555555555555";
 
-function mockResponse(body, { ok = true, status = 200 } = {}) {
+function mockResponse(body, { ok = true, status = 200, headers = {} } = {}) {
   return Promise.resolve({
     ok,
     status,
+    headers: {
+      get: (name) => headers[name.toLowerCase()] ?? null,
+    },
     json: () => Promise.resolve(body),
   });
 }
@@ -127,7 +134,17 @@ describe("GlucoseReading", () => {
 
     test("resolves unknown numeric trend to None", () => {
       const reading = new GlucoseReading(sampleGlucoseJson({ Trend: 99 }));
-      expect(reading.trend).toBe(99);
+      expect(reading.trend).toBe(0);
+      expect(reading.trendDirection).toBe("None");
+      expect(reading.trendDescription).toBe("");
+      expect(reading.trendArrow).toBe("");
+    });
+
+    test("resolves unknown string trend to None", () => {
+      const reading = new GlucoseReading(
+        sampleGlucoseJson({ Trend: "UnknownFutureTrend" }),
+      );
+      expect(reading.trend).toBe(0);
       expect(reading.trendDirection).toBe("None");
     });
   });
@@ -226,6 +243,47 @@ describe("GlucoseReading", () => {
       ).toThrow(ArgumentError);
     });
 
+    test.each([
+      "120oops",
+      "120.5",
+      120.5,
+      Infinity,
+      0,
+      -1,
+      Number.MAX_SAFE_INTEGER + 1,
+    ])(
+      "throws ArgumentError for invalid glucose value %p",
+      (value) => {
+        expect(
+          () => new GlucoseReading(sampleGlucoseJson({ Value: value })),
+        ).toThrow(ArgumentError);
+      },
+    );
+
+    test("accepts a complete integer string", () => {
+      expect(
+        new GlucoseReading(sampleGlucoseJson({ Value: "120" })).value,
+      ).toBe(120);
+    });
+
+    test("rejects a timestamp with extra surrounding text", () => {
+      expect(
+        () =>
+          new GlucoseReading(
+            sampleGlucoseJson({ DT: "prefixDate(1691455258000-0400)suffix" }),
+          ),
+      ).toThrow(ArgumentError);
+    });
+
+    test("rejects an out-of-range timestamp", () => {
+      expect(
+        () =>
+          new GlucoseReading(
+            sampleGlucoseJson({ DT: "Date(9999999999999999-0400)" }),
+          ),
+      ).toThrow(ArgumentError);
+    });
+
     test("throws ArgumentError for null input", () => {
       expect(() => new GlucoseReading(null)).toThrow(ArgumentError);
     });
@@ -298,6 +356,29 @@ describe("Dexcom constructor", () => {
       });
       expect(jp._applicationId).not.toBe(us._applicationId);
     });
+
+    test("does not expose the password or session ID when logged", () => {
+      const dexcom = createAuthenticatedDexcom();
+
+      expect(JSON.stringify(dexcom)).not.toContain("testpass");
+      expect(JSON.stringify(dexcom)).not.toContain(VALID_SESSION_ID);
+      expect(inspect(dexcom)).not.toContain("testpass");
+      expect(inspect(dexcom)).not.toContain(VALID_SESSION_ID);
+    });
+
+    test("uses the default request timeout", () => {
+      const dexcom = new Dexcom({ username: "user", password: "pass" });
+      expect(dexcom._requestTimeoutMs).toBe(DEFAULT_REQUEST_TIMEOUT_MS);
+    });
+
+    test("accepts a custom request timeout", () => {
+      const dexcom = new Dexcom({
+        username: "user",
+        password: "pass",
+        requestTimeoutMs: 5000,
+      });
+      expect(dexcom._requestTimeoutMs).toBe(5000);
+    });
   });
 
   describe("validation errors", () => {
@@ -329,6 +410,20 @@ describe("Dexcom constructor", () => {
         expect(e.enum).toBe(ArgumentErrorEnum.USER_ID_MULTIPLE);
       }
     });
+
+    test.each([0, -1, 1.5, "1000", null, 2147483648])(
+      "throws REQUEST_TIMEOUT_INVALID for timeout %p",
+      (requestTimeoutMs) => {
+        expect(
+          () =>
+            new Dexcom({
+              username: "user",
+              password: "pass",
+              requestTimeoutMs,
+            }),
+        ).toThrow(ArgumentError);
+      },
+    );
 
     test("throws REGION_INVALID with invalid region", () => {
       expect(
@@ -503,9 +598,24 @@ describe("Dexcom._handleErrorCode", () => {
 
 describe("Dexcom._post", () => {
   let dexcom;
+  let setTimeoutSpy;
+  let backoffDelays;
 
   beforeEach(() => {
     dexcom = createAuthenticatedDexcom();
+    // Skip real backoff delays between retries, recording them instead
+    backoffDelays = [];
+    setTimeoutSpy = jest
+      .spyOn(global, "setTimeout")
+      .mockImplementation((callback, ms) => {
+        backoffDelays.push(ms);
+        callback();
+        return 0;
+      });
+  });
+
+  afterEach(() => {
+    setTimeoutSpy.mockRestore();
   });
 
   test("returns parsed JSON on success", async () => {
@@ -523,7 +633,7 @@ describe("Dexcom._post", () => {
         method: "POST",
         headers: expect.objectContaining({
           "Content-Type": "application/json",
-          "Accept-Encoding": "application/json",
+          Accept: "application/json",
         }),
       }),
     );
@@ -553,27 +663,218 @@ describe("Dexcom._post", () => {
   });
 
   test("throws ServerError UNEXPECTED on network error", async () => {
-    mockFetch.mockReturnValueOnce(Promise.reject(new Error("Network failed")));
+    const networkError = new Error("Network failed");
+    mockFetch.mockImplementation(() => Promise.reject(networkError));
     await expect(dexcom._post("TestEndpoint")).rejects.toThrow(ServerError);
     try {
-      mockFetch.mockReturnValueOnce(
-        Promise.reject(new Error("Network failed")),
-      );
       await dexcom._post("TestEndpoint");
     } catch (e) {
       expect(e.enum).toBe(ServerErrorEnum.UNEXPECTED);
+      expect(e.cause).toBe(networkError);
     }
   });
 
   test("throws ServerError INVALID_JSON when response is not JSON", async () => {
-    mockFetch.mockReturnValueOnce(mockJsonError());
+    mockFetch.mockImplementation(() => mockJsonError());
     await expect(dexcom._post("TestEndpoint")).rejects.toThrow(ServerError);
     try {
-      mockFetch.mockReturnValueOnce(mockJsonError());
       await dexcom._post("TestEndpoint");
     } catch (e) {
       expect(e.enum).toBe(ServerErrorEnum.INVALID_JSON);
+      expect(e.cause).toBeInstanceOf(SyntaxError);
     }
+  });
+
+  test("retries transient failures and returns on success", async () => {
+    mockFetch
+      .mockReturnValueOnce(Promise.reject(new Error("Network failed")))
+      .mockReturnValueOnce(mockJsonError())
+      .mockReturnValueOnce(mockResponse({ result: "ok" }));
+
+    const result = await dexcom._post("TestEndpoint");
+
+    expect(result).toEqual({ result: "ok" });
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+
+  test("retries unknown server error codes", async () => {
+    mockFetch
+      .mockReturnValueOnce(
+        mockResponse(
+          { Code: "SomeNewCode", Message: "Something happened" },
+          { ok: false, status: 500 },
+        ),
+      )
+      .mockReturnValueOnce(mockResponse({ result: "ok" }));
+
+    const result = await dexcom._post("TestEndpoint");
+
+    expect(result).toEqual({ result: "ok" });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  test("does not retry an unknown client error", async () => {
+    mockFetch.mockImplementation(() =>
+      mockResponse(
+        { Code: "UnknownClientError", Message: "Bad request" },
+        { ok: false, status: 400 },
+      ),
+    );
+
+    await expect(dexcom._post("TestEndpoint")).rejects.toThrow(ServerError);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(backoffDelays).toEqual([]);
+  });
+
+  test("does not retry malformed JSON from a client error", async () => {
+    mockFetch.mockImplementation(() => mockJsonError({ status: 403 }));
+
+    await expect(dexcom._post("TestEndpoint")).rejects.toThrow(ServerError);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  test("honors Retry-After when it exceeds exponential backoff", async () => {
+    mockFetch
+      .mockReturnValueOnce(
+        mockResponse(
+          { Code: "RateLimited", Message: "Try later" },
+          {
+            ok: false,
+            status: 429,
+            headers: { "retry-after": "10" },
+          },
+        ),
+      )
+      .mockReturnValueOnce(mockResponse({ result: "ok" }));
+
+    await expect(dexcom._post("TestEndpoint")).resolves.toEqual({
+      result: "ok",
+    });
+    expect(backoffDelays).toEqual([10000]);
+  });
+
+  test("honors an HTTP-date Retry-After value", async () => {
+    const now = 2000000000000;
+    const dateNowSpy = jest.spyOn(Date, "now").mockReturnValue(now);
+    mockFetch
+      .mockReturnValueOnce(
+        mockResponse(
+          { Code: "RateLimited", Message: "Try later" },
+          {
+            ok: false,
+            status: 429,
+            headers: {
+              "retry-after": new Date(now + 12000).toUTCString(),
+            },
+          },
+        ),
+      )
+      .mockReturnValueOnce(mockResponse({ result: "ok" }));
+
+    try {
+      await expect(dexcom._post("TestEndpoint")).resolves.toEqual({
+        result: "ok",
+      });
+      expect(backoffDelays).toEqual([12000]);
+    } finally {
+      dateNowSpy.mockRestore();
+    }
+  });
+
+  test("ignores an invalid Retry-After value", async () => {
+    mockFetch
+      .mockReturnValueOnce(
+        mockResponse(
+          { Code: "RateLimited", Message: "Try later" },
+          {
+            ok: false,
+            status: 429,
+            headers: { "retry-after": "not-a-date" },
+          },
+        ),
+      )
+      .mockReturnValueOnce(mockResponse({ result: "ok" }));
+
+    await expect(dexcom._post("TestEndpoint")).resolves.toEqual({
+      result: "ok",
+    });
+    expect(backoffDelays).toEqual([2000]);
+  });
+
+  test("gives up after MAX_POST_ATTEMPTS on persistent failure", async () => {
+    mockFetch.mockImplementation(() => mockJsonError());
+
+    await expect(dexcom._post("TestEndpoint")).rejects.toThrow(ServerError);
+    expect(mockFetch).toHaveBeenCalledTimes(MAX_POST_ATTEMPTS);
+  });
+
+  test("waits with exponential backoff between retries (2s, 4s, 8s)", async () => {
+    mockFetch.mockImplementation(() => mockJsonError());
+
+    await expect(dexcom._post("TestEndpoint")).rejects.toThrow(ServerError);
+    expect(backoffDelays).toEqual([2000, 4000, 8000]);
+  });
+
+  test("does not retry session errors", async () => {
+    mockFetch.mockImplementation(() =>
+      mockResponse(
+        { Code: "SessionNotValid", Message: "Session not valid" },
+        { ok: false, status: 500 },
+      ),
+    );
+
+    await expect(dexcom._post("TestEndpoint")).rejects.toThrow(SessionError);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  test("stops retrying when the caller aborts during backoff", async () => {
+    const controller = new AbortController();
+    const reason = new DOMException("Cancelled", "AbortError");
+    mockFetch.mockRejectedValue(new Error("Network failed"));
+    setTimeoutSpy.mockImplementation((callback, ms) => {
+      backoffDelays.push(ms);
+      controller.abort(reason);
+      callback();
+      return 0;
+    });
+
+    await expect(
+      dexcom._post("TestEndpoint", null, null, {
+        signal: controller.signal,
+      }),
+    ).rejects.toBe(reason);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not start a request when the caller already aborted", async () => {
+    const controller = new AbortController();
+    const reason = new DOMException("Cancelled", "AbortError");
+    controller.abort(reason);
+
+    await expect(
+      dexcom._post("TestEndpoint", null, null, {
+        signal: controller.signal,
+      }),
+    ).rejects.toBe(reason);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  test("aborts a hung request after the configured timeout", async () => {
+    dexcom = createAuthenticatedDexcom({ requestTimeoutMs: 5 });
+    mockFetch.mockImplementation((_url, { signal }) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      }),
+    );
+
+    await expect(dexcom._post("TestEndpoint")).rejects.toMatchObject({
+      name: "ServerError",
+      enum: ServerErrorEnum.UNEXPECTED,
+      cause: expect.objectContaining({ name: "TimeoutError" }),
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(MAX_POST_ATTEMPTS);
   });
 
   test("throws error from _handleErrorCode on non-OK response", async () => {
@@ -634,6 +935,14 @@ describe("Dexcom.createSession", () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(dexcom._sessionId).toBe(VALID_SESSION_ID);
+  });
+
+  test("does not retry a failed authentication request", async () => {
+    const dexcom = new Dexcom({ username: "user", password: "pass" });
+    mockFetch.mockRejectedValue(new Error("Connection dropped"));
+
+    await expect(dexcom.createSession()).rejects.toThrow(ServerError);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   test("sends correct JSON body for authenticate", async () => {

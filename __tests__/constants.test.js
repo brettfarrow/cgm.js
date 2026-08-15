@@ -13,6 +13,9 @@ const {
   MAX_MINUTES,
   MAX_MAX_COUNT,
   MMOL_L_CONVERSION_FACTOR,
+  MAX_POST_ATTEMPTS,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  BASE_RETRY_DELAY_MS,
 } = require("../constants");
 
 describe("Region", () => {
@@ -113,8 +116,9 @@ describe("HEADERS", () => {
     expect(HEADERS["Content-Type"]).toBe("application/json");
   });
 
-  test("includes Accept-Encoding", () => {
-    expect(HEADERS["Accept-Encoding"]).toBe("application/json");
+  test("requests a JSON response with Accept", () => {
+    expect(HEADERS.Accept).toBe("application/json");
+    expect(HEADERS["Accept-Encoding"]).toBeUndefined();
   });
 
   test("is frozen", () => {
@@ -224,5 +228,21 @@ describe("MMOL_L_CONVERSION_FACTOR", () => {
 
   test("converts 100 mg/dL to approximately 5.5 mmol/L", () => {
     expect(parseFloat((100 * MMOL_L_CONVERSION_FACTOR).toFixed(1))).toBe(5.5);
+  });
+});
+
+describe("MAX_POST_ATTEMPTS", () => {
+  test("is 4", () => {
+    expect(MAX_POST_ATTEMPTS).toBe(4);
+  });
+});
+
+describe("request timing constants", () => {
+  test("uses a 30 second request timeout", () => {
+    expect(DEFAULT_REQUEST_TIMEOUT_MS).toBe(30000);
+  });
+
+  test("uses a 2 second initial retry delay", () => {
+    expect(BASE_RETRY_DELAY_MS).toBe(2000);
   });
 });

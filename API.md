@@ -29,7 +29,7 @@ The main class for communicating with the Dexcom Share API.
 ```js
 import { Dexcom, Region } from "cgm.js";
 
-const dexcom = new Dexcom({ username, password, region });
+const dexcom = new Dexcom({ username, password, region, requestTimeoutMs });
 ```
 
 | Parameter | Type | Required | Default | Description |
@@ -38,11 +38,13 @@ const dexcom = new Dexcom({ username, password, region });
 | `username` | `string` | One of `username` or `accountId` | `null` | Username, email, or phone number for the Dexcom Share user. |
 | `accountId` | `string` | One of `username` or `accountId` | `null` | Account ID (UUID) for the Dexcom Share user. |
 | `region` | `Region` | No | `Region.US` | The Dexcom Share region. One of `Region.US`, `Region.OUS`, or `Region.JP`. |
+| `requestTimeoutMs` | `integer` | No | `30000` | Maximum time in milliseconds for each HTTP attempt. |
 
 **Throws:**
 - `ArgumentError` (`USER_ID_REQUIRED`) if neither `username` nor `accountId` is provided.
 - `ArgumentError` (`USER_ID_MULTIPLE`) if both `username` and `accountId` are provided.
 - `ArgumentError` (`REGION_INVALID`) if `region` is not a valid `Region` value.
+- `ArgumentError` (`REQUEST_TIMEOUT_INVALID`) if `requestTimeoutMs` is not an integer between 1 and 2,147,483,647.
 
 **Notes:**
 - Use `username` with your Dexcom account credentials (the account that *publishes* readings, not a follower).
@@ -67,11 +69,13 @@ Returns the account ID. This is `null` until a session has been created (at whic
 
 ---
 
-#### `async dexcom.createSession()`
+#### `async dexcom.createSession(options?)`
 
 Authenticates with the Dexcom Share API and establishes a session.
 
 **Returns:** `Promise<void>`
+
+`options.signal` may be an `AbortSignal` used to cancel the request.
 
 **Throws:**
 - `ArgumentError` (`PASSWORD_INVALID`) if the password is missing or not a string.
@@ -86,11 +90,12 @@ Authenticates with the Dexcom Share API and establishes a session.
 **Notes:**
 - When using `username`, this makes two API calls: one to get the `accountId`, then one to get the `sessionId`.
 - When using `accountId`, this skips the first call and goes directly to login.
+- Authentication requests are not automatically retried because replaying an ambiguous login attempt can trigger account throttling.
 - You typically don't need to call this directly. `getGlucoseReadings()` and the convenience methods call it automatically when needed.
 
 ---
 
-#### `async dexcom.getGlucoseReadings(minutes?, maxCount?)`
+#### `async dexcom.getGlucoseReadings(minutes?, maxCount?, options?)`
 
 Retrieves glucose readings from the Dexcom Share API.
 
@@ -102,6 +107,7 @@ const readings = await dexcom.getGlucoseReadings(60, 12);
 |-----------|------|---------|-------------|
 | `minutes` | `integer` | `1440` | Number of minutes to look back (1--1440). |
 | `maxCount` | `integer` | `288` | Maximum number of readings to return (1--288). |
+| `options.signal` | `AbortSignal` | | Cancels the active request or retry delay. |
 
 **Returns:** `Promise<GlucoseReading[]>` -- An array of `GlucoseReading` objects. May be empty if no readings are available in the specified window.
 
@@ -114,14 +120,18 @@ const readings = await dexcom.getGlucoseReadings(60, 12);
 **Notes:**
 - The API returns the *minimum* of the two parameters. For example, if you request 30 minutes and 3 readings, you'll get at most 3 readings (or fewer if fewer exist in the 30-minute window).
 - If no session exists or the session has expired, this method automatically calls `createSession()` before retrying.
+- Transient network failures and HTTP 408, 425, 429, and 5xx responses are retried up to four total attempts with exponential delays of 2, 4, and 8 seconds. A longer server-provided `Retry-After` delay takes precedence.
+- Client errors other than 408, 425, and 429 are not retried.
 
 ---
 
-#### `async dexcom.getLatestGlucoseReading()`
+#### `async dexcom.getLatestGlucoseReading(options?)`
 
 Returns the single most recent glucose reading within the last 5 minutes.
 
 **Returns:** `Promise<GlucoseReading | null>` -- The latest reading, or `null` if no reading is available within the 5-minute window.
+
+`options.signal` may be an `AbortSignal` used to cancel the operation.
 
 Equivalent to:
 ```js
@@ -131,7 +141,7 @@ return readings.length > 0 ? readings[0] : null;
 
 ---
 
-#### `async dexcom.getLatestGlucoseReadings(maxCount?)`
+#### `async dexcom.getLatestGlucoseReadings(maxCount?, options?)`
 
 Returns glucose readings from the last 24 hours.
 
@@ -142,6 +152,7 @@ const readings = await dexcom.getLatestGlucoseReadings(12);
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `maxCount` | `integer` | `288` | Maximum number of readings to return (1--288). |
+| `options.signal` | `AbortSignal` | | Cancels the operation. |
 
 **Returns:** `Promise<GlucoseReading[]>` -- An array of `GlucoseReading` objects from the full 24-hour window.
 
@@ -152,11 +163,13 @@ return dexcom.getGlucoseReadings(1440, maxCount);
 
 ---
 
-#### `async dexcom.getCurrentGlucoseReading()`
+#### `async dexcom.getCurrentGlucoseReading(options?)`
 
 Returns the single most recent glucose reading within the last 10 minutes.
 
 **Returns:** `Promise<GlucoseReading | null>` -- The current reading, or `null` if no reading is available within the 10-minute window.
+
+`options.signal` may be an `AbortSignal` used to cancel the operation.
 
 Equivalent to:
 ```js
@@ -267,6 +280,7 @@ Error enums are frozen objects whose values are the human-readable error message
 | `SESSION_ID_INVALID` | `"Session ID must be UUID"` |
 | `SESSION_ID_DEFAULT` | `"Session ID default"` |
 | `GLUCOSE_READING_INVALID` | `"JSON glucose reading incorrectly formatted"` |
+| `REQUEST_TIMEOUT_INVALID` | `"Request timeout must be an integer between 1 and 2147483647"` |
 
 #### `ServerErrorEnum`
 
@@ -347,7 +361,10 @@ Available from `import { ... } from "cgm.js/constants"`.
 | `DEXCOM_TREND_DIRECTIONS` | `object` | See [Trend Values](#trend-values) | Maps direction strings to numeric codes. |
 | `TREND_DESCRIPTIONS` | `string[]` | | Human-readable descriptions indexed by trend code. |
 | `TREND_ARROWS` | `string[]` | | Unicode arrows indexed by trend code. |
-| `HEADERS` | `object` | `{ "Content-Type": "application/json", "Accept-Encoding": "application/json" }` | HTTP headers used for all API requests. |
+| `HEADERS` | `object` | `{ "Content-Type": "application/json", "Accept": "application/json" }` | HTTP headers used for all API requests. |
+| `MAX_POST_ATTEMPTS` | `number` | `4` | Maximum attempts for a transient read request. |
+| `DEFAULT_REQUEST_TIMEOUT_MS` | `number` | `30000` | Default timeout for each HTTP attempt. |
+| `BASE_RETRY_DELAY_MS` | `number` | `2000` | Initial exponential-backoff delay. |
 | `DEXCOM_BASE_URLS` | `object` | | Maps `Region` values to base URL strings. |
 | `DEXCOM_APPLICATION_IDS` | `object` | | Maps `Region` values to application ID strings. |
 | `DEXCOM_AUTHENTICATE_ENDPOINT` | `string` | `"General/AuthenticatePublisherAccount"` | API endpoint for authentication. |
