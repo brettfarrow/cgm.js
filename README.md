@@ -18,7 +18,11 @@ npm install cgm.js
 const { Dexcom, Region } = require("cgm.js");
 
 async function main() {
-  const dexcom = new Dexcom({ username: "username", password: "password" });
+const dexcom = new Dexcom({
+  username: "username",
+  password: "password",
+  requestTimeoutMs: 30_000, // optional; 30 seconds by default
+});
   const reading = await dexcom.getCurrentGlucoseReading();
 
   console.log(reading.value);            // 120
@@ -90,6 +94,13 @@ const readings = await dexcom.getGlucoseReadings();
 // Last 60 minutes, up to 12 readings
 const readings = await dexcom.getGlucoseReadings(60, 12);
 
+// Cancel an in-flight request or retry delay
+const controller = new AbortController();
+const pending = dexcom.getGlucoseReadings(60, 12, {
+  signal: controller.signal,
+});
+controller.abort();
+
 // Last 24 hours of readings, convenience method
 const readings = await dexcom.getLatestGlucoseReadings();
 
@@ -98,6 +109,8 @@ const readings = await dexcom.getLatestGlucoseReadings(5);
 ```
 
 The API returns the minimum of the two parameters (`minutes` and `maxCount`), so if readings occur every 5 minutes and you request 30 minutes with `maxCount: 3`, you'll get 3 readings.
+
+Read requests time out per attempt and retry transient network failures, HTTP 408/425/429 responses, and server errors with exponential backoff. `Retry-After` is honored when present. Authentication requests are not automatically replayed, which avoids accidental repeated login attempts after an ambiguous network failure.
 
 ### GlucoseReading Properties
 

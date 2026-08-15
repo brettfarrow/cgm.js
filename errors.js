@@ -21,6 +21,8 @@ const ArgumentErrorEnum = Object.freeze({
   SESSION_ID_INVALID: "Session ID must be UUID",
   SESSION_ID_DEFAULT: "Session ID default",
   GLUCOSE_READING_INVALID: "JSON glucose reading incorrectly formatted",
+  REQUEST_TIMEOUT_INVALID:
+    "Request timeout must be an integer between 1 and 2147483647",
 });
 
 const ServerErrorEnum = Object.freeze({
@@ -30,11 +32,11 @@ const ServerErrorEnum = Object.freeze({
 });
 
 class DexcomError extends Error {
-  constructor(errorEnum = null) {
+  constructor(errorEnum = null, options) {
     if (errorEnum !== null) {
-      super(errorEnum);
+      super(errorEnum, options);
     } else {
-      super();
+      super(undefined, options);
     }
     this.name = "DexcomError";
     this._enum = errorEnum;
@@ -46,29 +48,29 @@ class DexcomError extends Error {
 }
 
 class AccountError extends DexcomError {
-  constructor(errorEnum) {
-    super(errorEnum);
+  constructor(errorEnum, options) {
+    super(errorEnum, options);
     this.name = "AccountError";
   }
 }
 
 class SessionError extends DexcomError {
-  constructor(errorEnum) {
-    super(errorEnum);
+  constructor(errorEnum, options) {
+    super(errorEnum, options);
     this.name = "SessionError";
   }
 }
 
 class ArgumentError extends DexcomError {
-  constructor(errorEnum) {
-    super(errorEnum);
+  constructor(errorEnum, options) {
+    super(errorEnum, options);
     this.name = "ArgumentError";
   }
 }
 
 class ServerError extends DexcomError {
-  constructor(errorEnum) {
-    super(errorEnum);
+  constructor(errorEnum, options) {
+    super(errorEnum, options);
     this.name = "ServerError";
   }
 }

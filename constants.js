@@ -38,7 +38,7 @@ const DEXCOM_GLUCOSE_READINGS_ENDPOINT =
 // Headers for all Dexcom Share API requests
 const HEADERS = Object.freeze({
   "Content-Type": "application/json",
-  "Accept-Encoding": "application/json",
+  Accept: "application/json",
 });
 
 // Trend directions returned by the Dexcom Share API mapped to integers
@@ -95,6 +95,16 @@ const MAX_MAX_COUNT = 288;
 // Conversion factor between mg/dL and mmol/L
 const MMOL_L_CONVERSION_FACTOR = 0.0555;
 
+// Maximum number of attempts for a read request; retryable network and server
+// failures use exponential backoff (2s, 4s, 8s) before giving up
+const MAX_POST_ATTEMPTS = 4;
+
+// Maximum time to wait for an individual API request before aborting it
+const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
+
+// Initial delay used by the exponential retry backoff
+const BASE_RETRY_DELAY_MS = 2000;
+
 module.exports = {
   Region,
   DEXCOM_APPLICATION_IDS,
@@ -110,4 +120,7 @@ module.exports = {
   MAX_MINUTES,
   MAX_MAX_COUNT,
   MMOL_L_CONVERSION_FACTOR,
+  MAX_POST_ATTEMPTS,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  BASE_RETRY_DELAY_MS,
 };
