@@ -113,8 +113,8 @@ describe("HEADERS", () => {
     expect(HEADERS["Content-Type"]).toBe("application/json");
   });
 
-  test("includes Accept-Encoding", () => {
-    expect(HEADERS["Accept-Encoding"]).toBe("application/json");
+  test("includes Accept", () => {
+    expect(HEADERS["Accept"]).toBe("application/json");
   });
 
   test("is frozen", () => {

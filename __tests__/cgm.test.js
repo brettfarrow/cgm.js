@@ -76,6 +76,165 @@ beforeEach(() => {
   mockFetch.mockReset();
 });
 
+afterEach(() => {
+  jest.restoreAllMocks();
+});
+
+describe("request and response hardening", () => {
+  test.each([0, -1, 1.5, NaN, Infinity, "1000", null, 2147483648])(
+    "rejects invalid request timeout %p",
+    (requestTimeout) => {
+      expect(() => createAuthenticatedDexcom({ requestTimeout })).toThrow(
+        ArgumentErrorEnum.REQUEST_TIMEOUT_INVALID,
+      );
+    },
+  );
+
+  test("blocks redirects on credential-bearing requests", async () => {
+    mockSuccessfulAuth();
+    const dexcom = new Dexcom({ username: "user", password: "pass" });
+    await dexcom.createSession();
+    for (const [, options] of mockFetch.mock.calls) {
+      expect(options.redirect).toBe("error");
+      expect(options.signal).toBeInstanceOf(AbortSignal);
+    }
+  });
+
+  test.each(["fetch", "body"])("times out during %s", async (phase) => {
+    const controller = new AbortController();
+    const timeout = jest.spyOn(AbortSignal, "timeout")
+      .mockReturnValue(controller.signal);
+    const pending = new Promise((resolve, reject) => {
+      controller.signal.addEventListener("abort", () => reject(controller.signal.reason));
+    });
+    mockFetch.mockReturnValueOnce(phase === "fetch" ? pending : Promise.resolve({
+      ok: true,
+      json: () => pending,
+    }));
+    const dexcom = createAuthenticatedDexcom({ requestTimeout: 50 });
+    const request = dexcom.getGlucoseReadings();
+    const assertion = expect(request).rejects.toThrow(ServerErrorEnum.TIMEOUT);
+    // Allow fetch to resolve before aborting the body in the second case.
+    await Promise.resolve();
+    controller.abort();
+    await assertion;
+    expect(timeout).toHaveBeenCalledWith(50);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  test.each([null, [], "error", 42, { Code: "InvalidArgument", Message: 12 }])(
+    "wraps malformed HTTP error body %p in ServerError",
+    async (body) => {
+      mockFetch.mockReturnValueOnce(mockResponse(body, { ok: false }));
+      await expect(createAuthenticatedDexcom().getGlucoseReadings())
+        .rejects.toThrow(ServerError);
+    },
+  );
+
+  test.each([null, {}, "readings", 42])("rejects non-array readings %p", async (body) => {
+    mockFetch.mockReturnValueOnce(mockResponse(body));
+    await expect(createAuthenticatedDexcom().getGlucoseReadings())
+      .rejects.toThrow(ServerErrorEnum.UNEXPECTED);
+  });
+
+  test.each(["120oops", "120.5", "1e2", "", true, [], {}, 120.5, Infinity, -1, Number.MAX_SAFE_INTEGER + 1])(
+    "rejects malformed glucose value %p",
+    (Value) => {
+      expect(() => new GlucoseReading(sampleGlucoseJson({ Value })))
+        .toThrow(ArgumentErrorEnum.GLUCOSE_READING_INVALID);
+    },
+  );
+
+  test("accepts integer strings", () => {
+    expect(new GlucoseReading(sampleGlucoseJson({ Value: "120" })).value).toBe(120);
+  });
+
+  test("rejects timestamps outside the Date range", () => {
+    expect(() => new GlucoseReading(sampleGlucoseJson({ DT: "Date(99999999999999999+0000)" })))
+      .toThrow(ArgumentErrorEnum.GLUCOSE_READING_INVALID);
+  });
+
+  test.each(["constructor", "__proto__", "toString"])("does not inherit trend %s", (Trend) => {
+    const reading = new GlucoseReading(sampleGlucoseJson({ Trend }));
+    expect(reading.trend).toBe(0);
+    expect(reading.trendArrow).toBe("");
+  });
+
+  test.each([undefined, null, {}, NaN, 1.5])("rejects malformed trend %p", (Trend) => {
+    expect(() => new GlucoseReading(sampleGlucoseJson({ Trend })))
+      .toThrow(ArgumentErrorEnum.GLUCOSE_READING_INVALID);
+  });
+});
+
+describe("concurrent authentication", () => {
+  test("stops after one refresh when the new session is also rejected", async () => {
+    const dexcom = createAuthenticatedDexcom();
+    mockFetch
+      .mockReturnValueOnce(mockResponse({ Code: "SessionNotValid" }, { ok: false }))
+      .mockReturnValueOnce(mockResponse(VALID_SESSION_ID))
+      .mockReturnValueOnce(mockResponse({ Code: "SessionNotValid" }, { ok: false }));
+    await expect(dexcom.getGlucoseReadings()).rejects.toThrow(SessionError);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+
+  test("parallel initial reads share one authentication and login", async () => {
+    const dexcom = new Dexcom({ username: "user", password: "pass" });
+    mockSuccessfulAuth();
+    mockFetch.mockImplementation(() => mockResponse([sampleGlucoseJson()]));
+    const results = await Promise.all(Array.from({ length: 10 }, () => dexcom.getGlucoseReadings()));
+    expect(results.every((readings) => readings[0].value === 120)).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(12);
+  });
+
+  test("parallel expired sessions share one login", async () => {
+    const dexcom = createAuthenticatedDexcom();
+    mockFetch
+      .mockReturnValueOnce(mockResponse({ Code: "SessionNotValid" }, { ok: false }))
+      .mockReturnValueOnce(mockResponse({ Code: "SessionNotValid" }, { ok: false }))
+      .mockReturnValueOnce(mockResponse("22222222-3333-4444-5555-666666666666"))
+      .mockImplementation(() => mockResponse([sampleGlucoseJson()]));
+    await Promise.all([dexcom.getGlucoseReadings(), dexcom.getGlucoseReadings()]);
+    expect(mockFetch).toHaveBeenCalledTimes(5);
+  });
+
+  test("a late expired-session response reuses the refreshed session", async () => {
+    const dexcom = createAuthenticatedDexcom();
+    let release;
+    const delayed = new Promise((resolve) => { release = resolve; });
+    const newSession = "22222222-3333-4444-5555-666666666666";
+    mockFetch
+      .mockReturnValueOnce(delayed)
+      .mockReturnValueOnce(mockResponse({ Code: "SessionNotValid" }, { ok: false }))
+      .mockReturnValueOnce(mockResponse(newSession))
+      .mockImplementation(() => mockResponse([sampleGlucoseJson()]));
+    const first = dexcom.getGlucoseReadings();
+    await dexcom.getGlucoseReadings();
+    release(await mockResponse({ Code: "SessionNotValid" }, { ok: false }));
+    await first;
+    expect(mockFetch).toHaveBeenCalledTimes(5);
+    expect(mockFetch.mock.calls[4][0]).toContain(`sessionId=${newSession}`);
+  });
+
+  test("failed shared authentication can be retried", async () => {
+    const dexcom = new Dexcom({ username: "user", password: "pass" });
+    mockFetch.mockReturnValueOnce(mockResponse("invalid-account"));
+    const results = await Promise.allSettled([dexcom.createSession(), dexcom.createSession()]);
+    expect(results.map((r) => r.status)).toEqual(["rejected", "rejected"]);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(dexcom.accountId).toBeNull();
+    mockSuccessfulAuth();
+    await dexcom.createSession();
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+
+  test.each([undefined, null, "invalid", DEFAULT_UUID])("invalid login %p does not replace a session", async (body) => {
+    const dexcom = createAuthenticatedDexcom();
+    mockFetch.mockReturnValueOnce(mockResponse(body));
+    await expect(dexcom.createSession()).rejects.toThrow(ArgumentError);
+    expect(dexcom._sessionId).toBe(VALID_SESSION_ID);
+  });
+});
+
 // =============================================================================
 // GlucoseReading
 // =============================================================================
@@ -523,7 +682,7 @@ describe("Dexcom._post", () => {
         method: "POST",
         headers: expect.objectContaining({
           "Content-Type": "application/json",
-          "Accept-Encoding": "application/json",
+          "Accept": "application/json",
         }),
       }),
     );

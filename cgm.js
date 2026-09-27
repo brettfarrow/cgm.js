@@ -26,6 +26,12 @@ const {
   ServerErrorEnum,
 } = require("./errors.js");
 
+const TREND_NAMES = Object.freeze(
+  Object.fromEntries(
+    Object.entries(DEXCOM_TREND_DIRECTIONS).map(([name, code]) => [code, name]),
+  ),
+);
+
 function validUuid(uuid) {
   if (typeof uuid !== "string") return false;
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
@@ -36,26 +42,38 @@ function validUuid(uuid) {
 class GlucoseReading {
   constructor(jsonGlucoseReading) {
     try {
-      this._value = parseInt(jsonGlucoseReading.Value, 10);
+      const value = jsonGlucoseReading.Value;
+      if (
+        typeof value !== "number" &&
+        !(typeof value === "string" && /^\d+$/.test(value))
+      ) {
+        throw new Error("Invalid glucose value");
+      }
+      this._value = Number(value);
       this._trendDirection = jsonGlucoseReading.Trend;
 
       if (typeof this._trendDirection === "string") {
-        this._trend = DEXCOM_TREND_DIRECTIONS[this._trendDirection] || 0;
+        this._trend = Object.hasOwn(DEXCOM_TREND_DIRECTIONS, this._trendDirection)
+          ? DEXCOM_TREND_DIRECTIONS[this._trendDirection]
+          : 0;
       } else {
+        if (!Number.isInteger(this._trendDirection)) {
+          throw new Error("Invalid trend");
+        }
         this._trend = this._trendDirection;
-        this._trendDirection =
-          Object.keys(DEXCOM_TREND_DIRECTIONS).find(
-            (key) => DEXCOM_TREND_DIRECTIONS[key] === this._trend,
-          ) || "None";
+        this._trendDirection = TREND_NAMES[this._trend] || "None";
       }
 
-      if (isNaN(this._value)) {
+      if (!Number.isSafeInteger(this._value) || this._value < 0) {
         throw new Error("Invalid glucose value");
       }
 
       const match = jsonGlucoseReading.DT.match(/Date\((\d+)([+-]\d{4})\)/);
       if (match) {
         this._time = new Date(parseInt(match[1], 10));
+        if (Number.isNaN(this._time.getTime())) {
+          throw new Error("Invalid date");
+        }
       } else {
         throw new Error("Invalid date format");
       }
@@ -106,9 +124,17 @@ class Dexcom {
     username = null,
     accountId = null,
     region = Region.US,
+    requestTimeout = 30000,
   } = {}) {
     this._validateRegion(region);
     this._validateUserIds(accountId, username);
+    if (
+      !Number.isInteger(requestTimeout) ||
+      requestTimeout < 1 ||
+      requestTimeout > 2147483647
+    ) {
+      throw new ArgumentError(ArgumentErrorEnum.REQUEST_TIMEOUT_INVALID);
+    }
 
     this._baseUrl = DEXCOM_BASE_URLS[region];
     this._applicationId = DEXCOM_APPLICATION_IDS[region];
@@ -116,6 +142,8 @@ class Dexcom {
     this._username = username;
     this._accountId = accountId;
     this._sessionId = null;
+    this._sessionPromise = null;
+    this._requestTimeout = requestTimeout;
   }
 
   get username() {
@@ -133,14 +161,18 @@ class Dexcom {
       queryString = "?" + new URLSearchParams(params).toString();
     }
 
+    const signal = AbortSignal.timeout(this._requestTimeout);
     let response;
     try {
       response = await fetch(`${url}${queryString}`, {
         method: "POST",
         headers: HEADERS,
         body: JSON.stringify(json || {}),
+        redirect: "error",
+        signal,
       });
     } catch (error) {
+      if (signal.aborted) throw new ServerError(ServerErrorEnum.TIMEOUT);
       throw new ServerError(ServerErrorEnum.UNEXPECTED);
     }
 
@@ -148,6 +180,7 @@ class Dexcom {
     try {
       responseJson = await response.json();
     } catch (error) {
+      if (signal.aborted) throw new ServerError(ServerErrorEnum.TIMEOUT);
       throw new ServerError(ServerErrorEnum.INVALID_JSON);
     }
 
@@ -159,8 +192,8 @@ class Dexcom {
   }
 
   _handleErrorCode(json) {
-    const code = json.Code;
-    const message = json.Message;
+    const code = typeof json?.Code === "string" ? json.Code : "";
+    const message = typeof json?.Message === "string" ? json.Message : "";
 
     if (code === "SessionIdNotFound") {
       return new SessionError(SessionErrorEnum.NOT_FOUND);
@@ -216,15 +249,11 @@ class Dexcom {
     }
   }
 
-  _validateSessionId() {
-    if (
-      !this._sessionId ||
-      typeof this._sessionId !== "string" ||
-      !validUuid(this._sessionId)
-    ) {
+  _validateSessionId(sessionId) {
+    if (!validUuid(sessionId)) {
       throw new ArgumentError(ArgumentErrorEnum.SESSION_ID_INVALID);
     }
-    if (this._sessionId === DEFAULT_UUID) {
+    if (sessionId === DEFAULT_UUID) {
       throw new ArgumentError(ArgumentErrorEnum.SESSION_ID_DEFAULT);
     }
   }
@@ -241,25 +270,30 @@ class Dexcom {
     }
   }
 
-  _validateAccountId() {
-    if (
-      !this._accountId ||
-      typeof this._accountId !== "string" ||
-      !validUuid(this._accountId)
-    ) {
+  _validateAccountId(accountId) {
+    if (!validUuid(accountId)) {
       throw new ArgumentError(ArgumentErrorEnum.ACCOUNT_ID_INVALID);
     }
-    if (this._accountId === DEFAULT_UUID) {
+    if (accountId === DEFAULT_UUID) {
       throw new ArgumentError(ArgumentErrorEnum.ACCOUNT_ID_DEFAULT);
     }
   }
 
   async createSession() {
+    if (!this._sessionPromise) {
+      this._sessionPromise = this._createSession().finally(() => {
+        this._sessionPromise = null;
+      });
+    }
+    await this._sessionPromise;
+  }
+
+  async _createSession() {
     this._validatePassword();
 
     if (this._accountId == null) {
       this._validateUsername();
-      this._accountId = await this._post(
+      const accountId = await this._post(
         DEXCOM_AUTHENTICATE_ENDPOINT,
         null,
         {
@@ -268,17 +302,20 @@ class Dexcom {
           applicationId: this._applicationId,
         },
       );
+      this._validateAccountId(accountId);
+      this._accountId = accountId;
     }
 
-    this._validateAccountId();
+    this._validateAccountId(this._accountId);
 
-    this._sessionId = await this._post(DEXCOM_LOGIN_ID_ENDPOINT, null, {
+    const sessionId = await this._post(DEXCOM_LOGIN_ID_ENDPOINT, null, {
       accountId: this._accountId,
       password: this._password,
       applicationId: this._applicationId,
     });
 
-    this._validateSessionId();
+    this._validateSessionId(sessionId);
+    this._sessionId = sessionId;
   }
 
   async getGlucoseReadings(minutes = MAX_MINUTES, maxCount = MAX_MAX_COUNT) {
@@ -294,11 +331,12 @@ class Dexcom {
     }
 
     let jsonGlucoseReadings;
+    const sessionId = this._sessionId;
     try {
-      this._validateSessionId();
+      this._validateSessionId(sessionId);
       jsonGlucoseReadings = await this._post(
         DEXCOM_GLUCOSE_READINGS_ENDPOINT,
-        { sessionId: this._sessionId, minutes, maxCount },
+        { sessionId, minutes, maxCount },
       );
     } catch (error) {
       if (
@@ -307,7 +345,10 @@ class Dexcom {
           (error.enum === ArgumentErrorEnum.SESSION_ID_INVALID ||
             error.enum === ArgumentErrorEnum.SESSION_ID_DEFAULT))
       ) {
-        await this.createSession();
+        // A concurrent request may already have replaced the expired session.
+        if (this._sessionId === sessionId) {
+          await this.createSession();
+        }
         jsonGlucoseReadings = await this._post(
           DEXCOM_GLUCOSE_READINGS_ENDPOINT,
           { sessionId: this._sessionId, minutes, maxCount },
@@ -315,6 +356,10 @@ class Dexcom {
       } else {
         throw error;
       }
+    }
+
+    if (!Array.isArray(jsonGlucoseReadings)) {
+      throw new ServerError(ServerErrorEnum.UNEXPECTED);
     }
 
     return jsonGlucoseReadings.map(

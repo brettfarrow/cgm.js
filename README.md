@@ -21,6 +21,11 @@ async function main() {
   const dexcom = new Dexcom({ username: "username", password: "password" });
   const reading = await dexcom.getCurrentGlucoseReading();
 
+  if (!reading) {
+    console.log("No recent glucose reading available");
+    return;
+  }
+
   console.log(reading.value);            // 120
   console.log(reading.mmolL);            // 6.7
   console.log(reading.trendDirection);   // "Flat"
@@ -80,6 +85,24 @@ const latest = await dexcom.getLatestGlucoseReading();
 ```
 
 Both return a single `GlucoseReading` or `null` if no reading is available in the time window.
+
+### Request Behavior
+
+Each HTTP request has a 30-second timeout, including reading the response body.
+Set `requestTimeout` in milliseconds to change it:
+
+```js
+const dexcom = new Dexcom({
+  username: "user",
+  password: "pass",
+  requestTimeout: 15000,
+});
+```
+
+Timeouts throw `ServerError` with `ServerErrorEnum.TIMEOUT`. HTTP redirects are
+rejected to prevent forwarding credentials to another destination. Concurrent
+calls on the same client share session creation; expired sessions are refreshed
+with at most one retry per reading request.
 
 ### Get Multiple Readings
 

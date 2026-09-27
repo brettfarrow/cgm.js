@@ -58,8 +58,8 @@ describe("ArgumentErrorEnum", () => {
     expect(ArgumentErrorEnum.GLUCOSE_READING_INVALID).toBeDefined();
   });
 
-  test("has exactly 12 entries", () => {
-    expect(Object.keys(ArgumentErrorEnum)).toHaveLength(12);
+  test("has exactly 13 entries", () => {
+    expect(Object.keys(ArgumentErrorEnum)).toHaveLength(13);
   });
 
   test("is frozen", () => {
