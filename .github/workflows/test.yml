@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [18.x, 20.x, 22.x, 24.x]
+        node-version: [22.x, 24.x]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -22,6 +22,20 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - run: npm ci --ignore-scripts
-      - run: npm run test:coverage -- --runInBand
+      - run: npm run typecheck
+      - run: npm run test:coverage
+      - run: npm run build
+      - name: Smoke test packed package
+        run: |
+          npm pack --pack-destination "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP"
+          npm init -y > /dev/null
+          npm install --ignore-scripts ./cgm.js-*.tgz
+          node --input-type=module -e '
+            import { Dexcom, Region } from "cgm.js";
+            import { ServerErrorEnum } from "cgm.js/errors";
+            import { MAX_MINUTES } from "cgm.js/constants";
+            if (typeof Dexcom !== "function" || Region.US !== "us" || !ServerErrorEnum.TIMEOUT || MAX_MINUTES !== 1440) process.exit(1);
+          '
       - if: matrix.node-version == '24.x'
         run: npm audit --audit-level=moderate

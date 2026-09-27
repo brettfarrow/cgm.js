@@ -1,4 +1,5 @@
-const {
+import { describe, test, expect } from "vitest";
+import {
   Region,
   DEXCOM_APPLICATION_IDS,
   DEXCOM_BASE_URLS,
@@ -13,7 +14,7 @@ const {
   MAX_MINUTES,
   MAX_MAX_COUNT,
   MMOL_L_CONVERSION_FACTOR,
-} = require("../constants");
+} from "../src/constants.js";
 
 describe("Region", () => {
   test("has US, OUS, and JP values", () => {

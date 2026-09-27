@@ -1,4 +1,5 @@
-const {
+import { describe, test, expect } from "vitest";
+import {
   AccountErrorEnum,
   SessionErrorEnum,
   ArgumentErrorEnum,
@@ -8,7 +9,7 @@ const {
   SessionError,
   ArgumentError,
   ServerError,
-} = require("../errors");
+} from "../src/errors.js";
 
 describe("AccountErrorEnum", () => {
   test("has FAILED_AUTHENTICATION", () => {

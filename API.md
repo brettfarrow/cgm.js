@@ -15,6 +15,11 @@
   - [ArgumentError](#argumenterror)
   - [ServerError](#servererror)
 - [Constants](#constants)
+- [Types](#types)
+
+Everything below can be imported from the package root (`"cgm.js"`). Errors and
+constants are also available from the `"cgm.js/errors"` and `"cgm.js/constants"`
+subpaths.
 
 ---
 
@@ -189,8 +194,8 @@ matching pydexcom.
 | `value` | `number` | Blood glucose value in mg/dL. |
 | `mgdL` | `number` | Alias for `value`. Blood glucose value in mg/dL. |
 | `mmolL` | `number` | Blood glucose value in mmol/L (converted, rounded to 1 decimal). |
-| `trend` | `number` | Numeric trend code (0--9). See [Trend Values](#trend-values). |
-| `trendDirection` | `string` | Raw trend direction string from the API (e.g., `"Flat"`, `"SingleUp"`). |
+| `trend` | `Trend` | Numeric trend code (0--9). See [Trend Values](#trend-values). |
+| `trendDirection` | `TrendDirection` | Raw trend direction string from the API (e.g., `"Flat"`, `"SingleUp"`). |
 | `trendDescription` | `string` | Human-readable trend description (e.g., `"steady"`, `"rising"`). |
 | `trendArrow` | `string` | Unicode arrow representing the trend (e.g., `"\u2192"`, `"\u2191"`). |
 | `time` | `Date` | JavaScript `Date` object for when the reading was recorded. |
@@ -298,7 +303,7 @@ Error enums are frozen objects whose values are the human-readable error message
 All error classes extend `DexcomError`, which extends the built-in `Error`. This allows you to catch all library errors with a single `catch` or be specific.
 
 ```js
-import { DexcomError, AccountError, AccountErrorEnum } from "cgm.js/errors";
+import { DexcomError, AccountError, AccountErrorEnum } from "cgm.js";
 
 try {
   await dexcom.getGlucoseReadings();
@@ -351,7 +356,7 @@ Errors related to unexpected or malformed responses from the Dexcom Share API (i
 
 ## Constants
 
-Available from `import { ... } from "cgm.js/constants"`.
+Available from `import { ... } from "cgm.js"` or `"cgm.js/constants"`.
 
 | Constant | Type | Value | Description |
 |----------|------|-------|-------------|
@@ -368,3 +373,23 @@ Available from `import { ... } from "cgm.js/constants"`.
 | `DEXCOM_AUTHENTICATE_ENDPOINT` | `string` | `"General/AuthenticatePublisherAccount"` | API endpoint for authentication. |
 | `DEXCOM_LOGIN_ID_ENDPOINT` | `string` | `"General/LoginPublisherAccountById"` | API endpoint for session login. |
 | `DEXCOM_GLUCOSE_READINGS_ENDPOINT` | `string` | `"Publisher/ReadPublisherLatestGlucoseValues"` | API endpoint for glucose readings. |
+
+---
+
+## Types
+
+TypeScript types exported alongside the runtime values. Each enum object also
+has a type of the same name: the union of its string values.
+
+| Type | Definition |
+|------|------------|
+| `DexcomOptions` | `{ password: string; username?: string \| null; accountId?: string \| null; region?: Region; requestTimeout?: number }` |
+| `GlucoseReadingJson` | `{ DT: string; Value: number \| string; Trend: TrendDirection \| Trend; WT?: string; ST?: string }`, the raw reading returned by the API. |
+| `Region` | `"us" \| "ous" \| "jp"` |
+| `Trend` | `0 \| 1 \| 2 \| 3 \| 4 \| 5 \| 6 \| 7 \| 8 \| 9` |
+| `TrendDirection` | `"None" \| "DoubleUp" \| "SingleUp" \| "FortyFiveUp" \| "Flat" \| "FortyFiveDown" \| "SingleDown" \| "DoubleDown" \| "NotComputable" \| "RateOutOfRange"` |
+| `AccountErrorEnum`, `SessionErrorEnum`, `ArgumentErrorEnum`, `ServerErrorEnum` | Union of that enum's message strings. |
+| `DexcomErrorEnum` | Union of all four error enum types. |
+
+`DexcomError<E>` is generic over its enum type, and each subclass fixes it. For
+example, `ArgumentError["enum"]` is `ArgumentErrorEnum | null`.

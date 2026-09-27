@@ -1,17 +1,37 @@
 {
   "name": "cgm.js",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "description": "JavaScript port of pydexcom to allow use easy use of the Dexcom Share service",
-  "main": "cgm.js",
-  "scripts": {
-    "test": "jest",
-    "test:coverage": "jest --coverage"
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./errors": {
+      "types": "./dist/errors.d.ts",
+      "default": "./dist/errors.js"
+    },
+    "./constants": {
+      "types": "./dist/constants.d.ts",
+      "default": "./dist/constants.js"
+    },
+    "./package.json": "./package.json"
   },
-  "devDependencies": {
-    "jest": "^30.3.0"
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22"
   },
   "repository": {
     "type": "git",
@@ -19,12 +39,19 @@
   },
   "keywords": [
     "cgm",
-    "dexcom"
+    "dexcom",
+    "typescript"
   ],
   "author": "Brett Farrow",
   "license": "MIT",
   "bugs": {
     "url": "https://github.com/brettfarrow/cgm.js/issues"
   },
-  "homepage": "https://github.com/brettfarrow/cgm.js#readme"
+  "homepage": "https://github.com/brettfarrow/cgm.js#readme",
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "@vitest/coverage-v8": "^5.0.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
+  }
 }
