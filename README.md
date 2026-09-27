@@ -12,6 +12,35 @@ Node.js 18 or later.
 npm install cgm.js
 ```
 
+## Upgrading from v2 to v3
+
+Version 3.0.0 hardens HTTP requests and response parsing. Calls that succeeded
+in v2 can now throw:
+
+- **Glucose readings are validated strictly.** `Value` must be a nonnegative
+  integer or a string of decimal digits (`"120.5"` and `"120mg"` are rejected),
+  and `DT` must be a valid date. Malformed readings throw `ArgumentError` with
+  `ArgumentErrorEnum.GLUCOSE_READING_INVALID`.
+- **Unknown trends are rejected**, matching pydexcom. Trends must be one of the
+  known direction strings or integer codes 0-9. In v2, unknown strings mapped to
+  trend 0 and unknown integers kept their code with direction `"None"`.
+- **Requests time out after 30 seconds** by default, including reading the
+  response body, and throw `ServerError` with `ServerErrorEnum.TIMEOUT`. Pass
+  `requestTimeout` (milliseconds) to the constructor to change it.
+- **Redirects are not followed.** A redirect response throws `ServerError` with
+  `ServerErrorEnum.REDIRECT`, so credentials are never sent to another URL.
+- **Non-array reading responses throw** `ServerError` with
+  `ServerErrorEnum.UNEXPECTED` instead of failing with a `TypeError`.
+- **The exported `HEADERS` constant changed.** It now sends
+  `Accept: application/json` instead of the incorrect
+  `Accept-Encoding: application/json`.
+- **Tests that assert exact `fetch` options may need updating.** Each request now
+  also passes `redirect: "manual"` and an `AbortSignal` as `signal`.
+
+Constructor options, exports, reading methods, and error classes are otherwise
+unchanged. Concurrent calls on one client now share a single login instead of
+each authenticating separately.
+
 ## Upgrading from v1 to v2
 
 Version 2.0.0 changes the runtime requirements and HTTP implementation:
