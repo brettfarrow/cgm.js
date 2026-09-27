@@ -38,16 +38,19 @@ const dexcom = new Dexcom({ username, password, region });
 | `username` | `string` | One of `username` or `accountId` | `null` | Username, email, or phone number for the Dexcom Share user. |
 | `accountId` | `string` | One of `username` or `accountId` | `null` | Account ID (UUID) for the Dexcom Share user. |
 | `region` | `Region` | No | `Region.US` | The Dexcom Share region. One of `Region.US`, `Region.OUS`, or `Region.JP`. |
+| `requestTimeout` | `number` | No | `30000` | Timeout in milliseconds for each HTTP request, including the response body. Integer from 1 to 2147483647. |
 
 **Throws:**
 - `ArgumentError` (`USER_ID_REQUIRED`) if neither `username` nor `accountId` is provided.
 - `ArgumentError` (`USER_ID_MULTIPLE`) if both `username` and `accountId` are provided.
 - `ArgumentError` (`REGION_INVALID`) if `region` is not a valid `Region` value.
+- `ArgumentError` (`REQUEST_TIMEOUT_INVALID`) if `requestTimeout` is outside its integer range.
 
 **Notes:**
 - Use `username` with your Dexcom account credentials (the account that *publishes* readings, not a follower).
 - Use `accountId` if you already know your account UUID (found in the URL after logging in at your region's Dexcom Account Management site).
 - The constructor does **not** create a session automatically. Sessions are created lazily on the first API call, or by calling `createSession()` explicitly.
+- HTTP requests throw `ServerError` (`TIMEOUT`) when the configured timeout expires. Redirects are never followed, so credentials are not sent to another URL; a redirect response throws `ServerError` (`REDIRECT`).
 
 ---
 
@@ -87,6 +90,7 @@ Authenticates with the Dexcom Share API and establishes a session.
 - When using `username`, this makes two API calls: one to get the `accountId`, then one to get the `sessionId`.
 - When using `accountId`, this skips the first call and goes directly to login.
 - You typically don't need to call this directly. `getGlucoseReadings()` and the convenience methods call it automatically when needed.
+- Concurrent calls on the same client share an in-progress authentication attempt. Failed attempts can be retried by a later call. Invalid account or session IDs returned by the server are not cached.
 
 ---
 
@@ -114,6 +118,7 @@ const readings = await dexcom.getGlucoseReadings(60, 12);
 **Notes:**
 - The API returns the *minimum* of the two parameters. For example, if you request 30 minutes and 3 readings, you'll get at most 3 readings (or fewer if fewer exist in the 30-minute window).
 - If no session exists or the session has expired, this method automatically calls `createSession()` before retrying.
+- Each reading request retries at most once. A delayed expired-session response reuses a session already refreshed by another request. Non-array responses throw `ServerError` (`UNEXPECTED`).
 
 ---
 
@@ -169,6 +174,13 @@ return readings.length > 0 ? readings[0] : null;
 ### GlucoseReading
 
 Represents a single parsed glucose reading from the Dexcom Share API.
+
+Malformed readings throw `ArgumentError` (`GLUCOSE_READING_INVALID`). Values must
+be nonnegative safe integers or strings containing only decimal digits; partial
+numbers such as `"120mg"` and fractions are rejected. Timestamps must represent a
+valid JavaScript date. Trends must be one of the direction strings or integer
+codes 0-9 listed in [Trend Values](#trend-values); any other trend is rejected,
+matching pydexcom.
 
 #### Properties
 
@@ -267,12 +279,15 @@ Error enums are frozen objects whose values are the human-readable error message
 | `SESSION_ID_INVALID` | `"Session ID must be UUID"` |
 | `SESSION_ID_DEFAULT` | `"Session ID default"` |
 | `GLUCOSE_READING_INVALID` | `"JSON glucose reading incorrectly formatted"` |
+| `REQUEST_TIMEOUT_INVALID` | `"Request timeout must be an integer between 1 and 2147483647 milliseconds"` |
 
 #### `ServerErrorEnum`
 
 | Key | Value |
 |-----|-------|
 | `INVALID_JSON` | `"Invalid or malformed JSON in server response"` |
+| `TIMEOUT` | `"Request timed out"` |
+| `REDIRECT` | `"Server responded with a redirect, which is not followed to protect credentials"` |
 | `UNKNOWN_CODE` | `"Unknown error code in server response"` |
 | `UNEXPECTED` | `"Unexpected server response"` |
 
@@ -328,7 +343,7 @@ Errors related to invalid arguments passed to cgm.js methods (bad minutes/maxCou
 
 ### ServerError
 
-Errors related to unexpected or malformed responses from the Dexcom Share API (invalid JSON, unknown error codes).
+Errors related to unexpected or malformed responses from the Dexcom Share API (invalid JSON, unknown error codes, redirects, timeouts).
 
 **Extends:** `DexcomError`
 
@@ -347,7 +362,7 @@ Available from `import { ... } from "cgm.js/constants"`.
 | `DEXCOM_TREND_DIRECTIONS` | `object` | See [Trend Values](#trend-values) | Maps direction strings to numeric codes. |
 | `TREND_DESCRIPTIONS` | `string[]` | | Human-readable descriptions indexed by trend code. |
 | `TREND_ARROWS` | `string[]` | | Unicode arrows indexed by trend code. |
-| `HEADERS` | `object` | `{ "Content-Type": "application/json", "Accept-Encoding": "application/json" }` | HTTP headers used for all API requests. |
+| `HEADERS` | `object` | `{ "Content-Type": "application/json", "Accept": "application/json" }` | HTTP headers used for all API requests. |
 | `DEXCOM_BASE_URLS` | `object` | | Maps `Region` values to base URL strings. |
 | `DEXCOM_APPLICATION_IDS` | `object` | | Maps `Region` values to application ID strings. |
 | `DEXCOM_AUTHENTICATE_ENDPOINT` | `string` | `"General/AuthenticatePublisherAccount"` | API endpoint for authentication. |

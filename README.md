@@ -12,6 +12,53 @@ Node.js 18 or later.
 npm install cgm.js
 ```
 
+## Upgrading from v2 to v3
+
+Version 3.0.0 hardens HTTP requests and response parsing. Calls that succeeded
+in v2 can now throw:
+
+- **Glucose readings are validated strictly.** `Value` must be a nonnegative
+  integer or a string of decimal digits (`"120.5"` and `"120mg"` are rejected),
+  and `DT` must be a valid date. Malformed readings throw `ArgumentError` with
+  `ArgumentErrorEnum.GLUCOSE_READING_INVALID`.
+- **Unknown trends are rejected**, matching pydexcom. Trends must be one of the
+  known direction strings or integer codes 0-9. In v2, unknown strings mapped to
+  trend 0 and unknown integers kept their code with direction `"None"`.
+- **Requests time out after 30 seconds** by default, including reading the
+  response body, and throw `ServerError` with `ServerErrorEnum.TIMEOUT`. Pass
+  `requestTimeout` (milliseconds) to the constructor to change it.
+- **Redirects are not followed.** A redirect response throws `ServerError` with
+  `ServerErrorEnum.REDIRECT`, so credentials are never sent to another URL.
+- **Non-array reading responses throw** `ServerError` with
+  `ServerErrorEnum.UNEXPECTED` instead of failing with a `TypeError`.
+- **The exported `HEADERS` constant changed.** It now sends
+  `Accept: application/json` instead of the incorrect
+  `Accept-Encoding: application/json`.
+- **Tests that assert exact `fetch` options may need updating.** Each request now
+  also passes `redirect: "manual"` and an `AbortSignal` as `signal`.
+
+Constructor options, exports, reading methods, and error classes are otherwise
+unchanged. Concurrent calls on one client now share a single login instead of
+each authenticating separately.
+
+## Upgrading from v1 to v2
+
+Version 2.0.0 changes the runtime requirements and HTTP implementation:
+
+- **Node.js 18 or later is required**, up from Node.js 14. Update your local
+  runtime, CI configuration, and deployment environment before upgrading.
+- **Requests use the built-in global `fetch`.** The `isomorphic-fetch` dependency
+  and its automatic polyfill have been removed. Environments without global
+  `fetch` must supply their own compatible implementation.
+- **Tests that mock `isomorphic-fetch` must mock global `fetch` instead.** For
+  example, replace `jest.mock("isomorphic-fetch", () => mockFetch)` with
+  `jest.spyOn(globalThis, "fetch").mockImplementation(mockFetch)`, and restore
+  the spy after each test with `jest.restoreAllMocks()`.
+
+The v1 constructor options, exports, reading methods, and error classes are
+unchanged in the 2.0.0 release. Applications using the public API generally only
+need to update their runtime and any HTTP mocks.
+
 ## Quick Start
 
 ```js
@@ -20,6 +67,11 @@ const { Dexcom, Region } = require("cgm.js");
 async function main() {
   const dexcom = new Dexcom({ username: "username", password: "password" });
   const reading = await dexcom.getCurrentGlucoseReading();
+
+  if (!reading) {
+    console.log("No recent glucose reading available");
+    return;
+  }
 
   console.log(reading.value);            // 120
   console.log(reading.mmolL);            // 6.7
@@ -80,6 +132,25 @@ const latest = await dexcom.getLatestGlucoseReading();
 ```
 
 Both return a single `GlucoseReading` or `null` if no reading is available in the time window.
+
+### Request Behavior
+
+Each HTTP request has a 30-second timeout, including reading the response body.
+Set `requestTimeout` in milliseconds to change it:
+
+```js
+const dexcom = new Dexcom({
+  username: "user",
+  password: "pass",
+  requestTimeout: 15000,
+});
+```
+
+Timeouts throw `ServerError` with `ServerErrorEnum.TIMEOUT`. HTTP redirects are
+never followed, to prevent forwarding credentials to another destination; they
+throw `ServerError` with `ServerErrorEnum.REDIRECT`. Concurrent
+calls on the same client share session creation; expired sessions are refreshed
+with at most one retry per reading request.
 
 ### Get Multiple Readings
 

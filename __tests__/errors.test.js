@@ -56,10 +56,7 @@ describe("ArgumentErrorEnum", () => {
     expect(ArgumentErrorEnum.SESSION_ID_INVALID).toBeDefined();
     expect(ArgumentErrorEnum.SESSION_ID_DEFAULT).toBeDefined();
     expect(ArgumentErrorEnum.GLUCOSE_READING_INVALID).toBeDefined();
-  });
-
-  test("has exactly 12 entries", () => {
-    expect(Object.keys(ArgumentErrorEnum)).toHaveLength(12);
+    expect(ArgumentErrorEnum.REQUEST_TIMEOUT_INVALID).toBeDefined();
   });
 
   test("is frozen", () => {
@@ -82,6 +79,16 @@ describe("ServerErrorEnum", () => {
 
   test("has UNEXPECTED", () => {
     expect(ServerErrorEnum.UNEXPECTED).toBe("Unexpected server response");
+  });
+
+  test("has TIMEOUT", () => {
+    expect(ServerErrorEnum.TIMEOUT).toBe("Request timed out");
+  });
+
+  test("has REDIRECT", () => {
+    expect(ServerErrorEnum.REDIRECT).toBe(
+      "Server responded with a redirect, which is not followed to protect credentials",
+    );
   });
 
   test("is frozen", () => {

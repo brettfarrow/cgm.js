@@ -38,7 +38,7 @@ const DEXCOM_GLUCOSE_READINGS_ENDPOINT =
 // Headers for all Dexcom Share API requests
 const HEADERS = Object.freeze({
   "Content-Type": "application/json",
-  "Accept-Encoding": "application/json",
+  Accept: "application/json",
 });
 
 // Trend directions returned by the Dexcom Share API mapped to integers

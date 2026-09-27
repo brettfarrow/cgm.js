@@ -21,12 +21,17 @@ const ArgumentErrorEnum = Object.freeze({
   SESSION_ID_INVALID: "Session ID must be UUID",
   SESSION_ID_DEFAULT: "Session ID default",
   GLUCOSE_READING_INVALID: "JSON glucose reading incorrectly formatted",
+  REQUEST_TIMEOUT_INVALID:
+    "Request timeout must be an integer between 1 and 2147483647 milliseconds",
 });
 
 const ServerErrorEnum = Object.freeze({
   INVALID_JSON: "Invalid or malformed JSON in server response",
   UNKNOWN_CODE: "Unknown error code in server response",
   UNEXPECTED: "Unexpected server response",
+  TIMEOUT: "Request timed out",
+  REDIRECT:
+    "Server responded with a redirect, which is not followed to protect credentials",
 });
 
 class DexcomError extends Error {

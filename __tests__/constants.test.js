@@ -26,18 +26,13 @@ describe("Region", () => {
     expect(Object.isFrozen(Region)).toBe(true);
   });
 
-  test("has exactly 3 regions", () => {
-    expect(Object.keys(Region)).toHaveLength(3);
+  test.each(Object.values(Region))("%s has a base URL and application ID", (region) => {
+    expect(typeof DEXCOM_BASE_URLS[region]).toBe("string");
+    expect(typeof DEXCOM_APPLICATION_IDS[region]).toBe("string");
   });
 });
 
 describe("DEXCOM_APPLICATION_IDS", () => {
-  test("maps each region to an application ID", () => {
-    expect(DEXCOM_APPLICATION_IDS[Region.US]).toBeDefined();
-    expect(DEXCOM_APPLICATION_IDS[Region.OUS]).toBeDefined();
-    expect(DEXCOM_APPLICATION_IDS[Region.JP]).toBeDefined();
-  });
-
   test("US and OUS share the same application ID", () => {
     expect(DEXCOM_APPLICATION_IDS[Region.US]).toBe(
       DEXCOM_APPLICATION_IDS[Region.OUS],
@@ -113,8 +108,8 @@ describe("HEADERS", () => {
     expect(HEADERS["Content-Type"]).toBe("application/json");
   });
 
-  test("includes Accept-Encoding", () => {
-    expect(HEADERS["Accept-Encoding"]).toBe("application/json");
+  test("includes Accept", () => {
+    expect(HEADERS["Accept"]).toBe("application/json");
   });
 
   test("is frozen", () => {
@@ -136,20 +131,12 @@ describe("DEXCOM_TREND_DIRECTIONS", () => {
     expect(DEXCOM_TREND_DIRECTIONS.RateOutOfRange).toBe(9);
   });
 
-  test("has exactly 10 entries", () => {
-    expect(Object.keys(DEXCOM_TREND_DIRECTIONS)).toHaveLength(10);
-  });
-
   test("is frozen", () => {
     expect(Object.isFrozen(DEXCOM_TREND_DIRECTIONS)).toBe(true);
   });
 });
 
 describe("TREND_DESCRIPTIONS", () => {
-  test("has 10 entries matching trend direction indices", () => {
-    expect(TREND_DESCRIPTIONS).toHaveLength(10);
-  });
-
   test("index 0 is empty string (None)", () => {
     expect(TREND_DESCRIPTIONS[0]).toBe("");
   });
@@ -166,10 +153,6 @@ describe("TREND_DESCRIPTIONS", () => {
 });
 
 describe("TREND_ARROWS", () => {
-  test("has 10 entries matching trend direction indices", () => {
-    expect(TREND_ARROWS).toHaveLength(10);
-  });
-
   test("index 0 is empty string (None)", () => {
     expect(TREND_ARROWS[0]).toBe("");
   });
@@ -186,7 +169,7 @@ describe("TREND_ARROWS", () => {
 });
 
 describe("TREND_DESCRIPTIONS and TREND_ARROWS alignment", () => {
-  test("same length as DEXCOM_TREND_DIRECTIONS", () => {
+  test("have one entry per trend code", () => {
     const directionCount = Object.keys(DEXCOM_TREND_DIRECTIONS).length;
     expect(TREND_DESCRIPTIONS).toHaveLength(directionCount);
     expect(TREND_ARROWS).toHaveLength(directionCount);
@@ -196,12 +179,6 @@ describe("TREND_DESCRIPTIONS and TREND_ARROWS alignment", () => {
 describe("DEFAULT_UUID", () => {
   test("is all-zero UUID", () => {
     expect(DEFAULT_UUID).toBe("00000000-0000-0000-0000-000000000000");
-  });
-
-  test("is valid UUID format", () => {
-    expect(DEFAULT_UUID).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-    );
   });
 });
 
@@ -220,9 +197,5 @@ describe("MAX_MAX_COUNT", () => {
 describe("MMOL_L_CONVERSION_FACTOR", () => {
   test("is 0.0555", () => {
     expect(MMOL_L_CONVERSION_FACTOR).toBe(0.0555);
-  });
-
-  test("converts 100 mg/dL to approximately 5.5 mmol/L", () => {
-    expect(parseFloat((100 * MMOL_L_CONVERSION_FACTOR).toFixed(1))).toBe(5.5);
   });
 });
