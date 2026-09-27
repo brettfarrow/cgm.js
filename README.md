@@ -1,16 +1,38 @@
 # cgm.js
 
-A JavaScript library for the Dexcom Share API. Port of [pydexcom](https://github.com/gagebenne/pydexcom).
+A TypeScript library for the Dexcom Share API. Port of [pydexcom](https://github.com/gagebenne/pydexcom).
+
+Published as an ES module with bundled type definitions.
 
 ## Requirements
 
-Node.js 18 or later.
+Node.js 22 or later.
 
 ## Installation
 
 ```bash
 npm install cgm.js
 ```
+
+## Upgrading from v3 to v4
+
+Version 4.0.0 rewrites the library in TypeScript and publishes it as an ES
+module only. Runtime behavior is unchanged, but packaging changed:
+
+- **Node.js 22 or later is required**, up from Node.js 18.
+- **The package is ESM-only.** Use `import { Dexcom } from "cgm.js"`. CommonJS
+  code on Node.js 22.12 or later can still `require("cgm.js")`, because Node.js
+  can load ES modules synchronously. On older 22.x releases, use dynamic
+  `import()`.
+- **Imports go through the package `exports` map.** `cgm.js`, `cgm.js/errors`
+  and `cgm.js/constants` are the supported entry points. Deep imports such as
+  `cgm.js/cgm.js` or `cgm.js/errors.js` now fail with
+  `ERR_PACKAGE_PATH_NOT_EXPORTED`.
+- **Everything is exported from the package root.** Error classes, error enums,
+  and constants can now be imported from `cgm.js` directly, alongside `Dexcom`,
+  `GlucoseReading` and `Region`.
+- **Type definitions are included.** Remove any hand-written `declare module
+  "cgm.js"` shims. See [TypeScript](#typescript).
 
 ## Upgrading from v2 to v3
 
@@ -62,26 +84,21 @@ need to update their runtime and any HTTP mocks.
 ## Quick Start
 
 ```js
-const { Dexcom, Region } = require("cgm.js");
+import { Dexcom } from "cgm.js";
 
-async function main() {
-  const dexcom = new Dexcom({ username: "username", password: "password" });
-  const reading = await dexcom.getCurrentGlucoseReading();
+const dexcom = new Dexcom({ username: "username", password: "password" });
+const reading = await dexcom.getCurrentGlucoseReading();
 
-  if (!reading) {
-    console.log("No recent glucose reading available");
-    return;
-  }
-
+if (reading) {
   console.log(reading.value);            // 120
   console.log(reading.mmolL);            // 6.7
   console.log(reading.trendDirection);   // "Flat"
   console.log(reading.trendDescription); // "steady"
   console.log(reading.trendArrow);       // "→"
   console.log(reading.time);             // 2025-08-07T20:40:58.000Z
+} else {
+  console.log("No recent glucose reading available");
 }
-
-main();
 ```
 
 ## Usage
@@ -89,8 +106,33 @@ main();
 ### Importing
 
 ```js
-const { Dexcom, Region } = require("cgm.js");
+import { Dexcom, Region } from "cgm.js";
 ```
+
+### TypeScript
+
+Type definitions ship with the package, so no `@types` package is needed.
+Besides the classes, the package exports these types:
+
+```ts
+import {
+  Dexcom,
+  type DexcomOptions,      // constructor options
+  type GlucoseReading,     // reading class (also usable as a value)
+  type GlucoseReadingJson, // raw reading shape from the Share API
+  type Region,             // "us" | "ous" | "jp"
+  type Trend,              // numeric trend code, 0-9
+  type TrendDirection,     // "Flat" | "SingleUp" | ...
+} from "cgm.js";
+
+const options: DexcomOptions = { username: "user", password: "pass" };
+const dexcom = new Dexcom(options);
+const readings: GlucoseReading[] = await dexcom.getGlucoseReadings(60, 12);
+```
+
+Each error class narrows `error.enum` to its own enum. For example,
+`AccountError["enum"]` is `AccountErrorEnum | null`. Use `moduleResolution`
+`"nodenext"` or `"bundler"` so TypeScript reads the package `exports` map.
 
 ### Authentication
 
@@ -189,8 +231,12 @@ reading.json             // raw API response object
 ### Error Handling
 
 ```js
-const { AccountError, SessionError, ArgumentError, ServerError, DexcomError } = require("cgm.js/errors");
-const { AccountErrorEnum } = require("cgm.js/errors");
+import {
+  AccountError,
+  AccountErrorEnum,
+  DexcomError,
+  ServerError,
+} from "cgm.js"; // also available from "cgm.js/errors"
 
 try {
   const dexcom = new Dexcom({ username: "user", password: "pass" });
@@ -217,9 +263,14 @@ See [API.md](API.md) for complete API reference including all classes, methods, 
 ## Tests
 
 ```bash
-npm test                # run tests
-npm run test:coverage   # run tests with coverage report
+npm test                # run unit and type tests (Vitest)
+npm run test:coverage   # run tests with coverage; fails below 100%
+npm run typecheck       # type-check sources, tests and examples
+npm run build           # compile to dist/
 ```
+
+See [examples/example.ts](examples/example.ts) for a runnable example. After
+`npm run build`, run it with `node examples/example.ts`.
 
 ## Troubleshooting
 

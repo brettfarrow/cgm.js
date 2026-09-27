@@ -1,8 +1,13 @@
-const mockFetch = jest.fn();
-global.fetch = mockFetch;
-
-const { Dexcom, GlucoseReading, Region } = require("../cgm");
-const {
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  Dexcom,
+  GlucoseReading,
+  Region,
+  type DexcomOptions,
+  type GlucoseReadingJson,
+} from "../src/cgm.js";
+import { Region as ConstantsRegion } from "../src/constants.js";
+import {
   AccountError,
   AccountErrorEnum,
   ArgumentError,
@@ -12,22 +17,25 @@ const {
   ServerError,
   ServerErrorEnum,
   DexcomError,
-} = require("../errors");
-const {
+} from "../src/errors.js";
+import {
   DEFAULT_UUID,
   MAX_MINUTES,
   MAX_MAX_COUNT,
   DEXCOM_TREND_DIRECTIONS,
   TREND_DESCRIPTIONS,
   TREND_ARROWS,
-} = require("../constants");
+} from "../src/constants.js";
+
+const mockFetch = vi.fn();
+vi.stubGlobal("fetch", mockFetch);
 
 // --- Helpers ---
 
 const VALID_ACCOUNT_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 const VALID_SESSION_ID = "11111111-2222-3333-4444-555555555555";
 
-function mockResponse(body, { ok = true, status = 200 } = {}) {
+function mockResponse(body: unknown, { ok = true, status = 200 } = {}) {
   return Promise.resolve({
     ok,
     status,
@@ -43,7 +51,9 @@ function mockJsonError({ ok = false, status = 500 } = {}) {
   });
 }
 
-function sampleGlucoseJson(overrides = {}) {
+function sampleGlucoseJson(
+  overrides: Record<string, unknown> = {},
+): GlucoseReadingJson {
   return {
     WT: "Date(1691455258000)",
     ST: "Date(1691455258000)",
@@ -51,15 +61,15 @@ function sampleGlucoseJson(overrides = {}) {
     Value: 120,
     Trend: "Flat",
     ...overrides,
-  };
+  } as GlucoseReadingJson;
 }
 
-function createAuthenticatedDexcom(opts = {}) {
+function createAuthenticatedDexcom(opts: Record<string, unknown> = {}) {
   const dexcom = new Dexcom({
     username: "testuser",
     password: "testpass",
     ...opts,
-  });
+  } as DexcomOptions);
   dexcom._accountId = VALID_ACCOUNT_ID;
   dexcom._sessionId = VALID_SESSION_ID;
   return dexcom;
@@ -76,7 +86,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  jest.restoreAllMocks();
+  vi.restoreAllMocks();
 });
 
 describe("request and response hardening", () => {
@@ -101,7 +111,7 @@ describe("request and response hardening", () => {
 
   test.each(["fetch", "body"])("times out during %s", async (phase) => {
     const controller = new AbortController();
-    const timeout = jest.spyOn(AbortSignal, "timeout")
+    const timeout = vi.spyOn(AbortSignal, "timeout")
       .mockReturnValue(controller.signal);
     const pending = new Promise((resolve, reject) => {
       controller.signal.addEventListener("abort", () => reject(controller.signal.reason));
@@ -178,7 +188,7 @@ describe("concurrent authentication", () => {
     mockSuccessfulAuth();
     mockFetch.mockImplementation(() => mockResponse([sampleGlucoseJson()]));
     const results = await Promise.all(Array.from({ length: 10 }, () => dexcom.getGlucoseReadings()));
-    expect(results.every((readings) => readings[0].value === 120)).toBe(true);
+    expect(results.every((readings) => readings[0]!.value === 120)).toBe(true);
     expect(mockFetch).toHaveBeenCalledTimes(12);
   });
 
@@ -195,8 +205,8 @@ describe("concurrent authentication", () => {
 
   test("a late expired-session response waits for an in-progress refresh", async () => {
     const dexcom = createAuthenticatedDexcom();
-    let releaseFirst;
-    let releaseLogin;
+    let releaseFirst!: (value: unknown) => void;
+    let releaseLogin!: (value: unknown) => void;
     const secondSession = "22222222-3333-4444-5555-666666666666";
     const thirdSession = "33333333-4444-5555-6666-777777777777";
     mockFetch
@@ -222,7 +232,7 @@ describe("concurrent authentication", () => {
 
   test("a late expired-session response reuses the refreshed session", async () => {
     const dexcom = createAuthenticatedDexcom();
-    let release;
+    let release!: (value: unknown) => void;
     const delayed = new Promise((resolve) => { release = resolve; });
     const newSession = "22222222-3333-4444-5555-666666666666";
     mockFetch
@@ -235,7 +245,7 @@ describe("concurrent authentication", () => {
     release(await mockResponse({ Code: "SessionNotValid" }, { ok: false }));
     await first;
     expect(mockFetch).toHaveBeenCalledTimes(5);
-    expect(mockFetch.mock.calls[4][0]).toContain(`sessionId=${newSession}`);
+    expect(mockFetch.mock.calls[4]![0]).toContain(`sessionId=${newSession}`);
   });
 
   test("failed shared authentication can be retried", async () => {
@@ -381,18 +391,18 @@ describe("GlucoseReading", () => {
   describe("invalid input", () => {
     test("throws ArgumentError for missing Value", () => {
       const json = sampleGlucoseJson();
-      delete json.Value;
+      delete (json as Partial<GlucoseReadingJson>).Value;
       expect(() => new GlucoseReading(json)).toThrow(ArgumentError);
       try {
         new GlucoseReading(json);
       } catch (e) {
-        expect(e.enum).toBe(ArgumentErrorEnum.GLUCOSE_READING_INVALID);
+        expect((e as DexcomError).enum).toBe(ArgumentErrorEnum.GLUCOSE_READING_INVALID);
       }
     });
 
     test("throws ArgumentError for missing DT", () => {
       const json = sampleGlucoseJson();
-      delete json.DT;
+      delete (json as Partial<GlucoseReadingJson>).DT;
       expect(() => new GlucoseReading(json)).toThrow(ArgumentError);
     });
 
@@ -403,11 +413,11 @@ describe("GlucoseReading", () => {
     });
 
     test("throws ArgumentError for null input", () => {
-      expect(() => new GlucoseReading(null)).toThrow(ArgumentError);
+      expect(() => new GlucoseReading(null as unknown as GlucoseReadingJson)).toThrow(ArgumentError);
     });
 
     test("throws ArgumentError for empty object", () => {
-      expect(() => new GlucoseReading({})).toThrow(ArgumentError);
+      expect(() => new GlucoseReading({} as GlucoseReadingJson)).toThrow(ArgumentError);
     });
   });
 });
@@ -482,9 +492,18 @@ describe("Dexcom constructor", () => {
       try {
         new Dexcom({ password: "pass" });
       } catch (e) {
-        expect(e.enum).toBe(ArgumentErrorEnum.USER_ID_REQUIRED);
+        expect((e as DexcomError).enum).toBe(ArgumentErrorEnum.USER_ID_REQUIRED);
       }
     });
+
+    test.each([undefined, null])(
+      "throws USER_ID_REQUIRED when options are %p",
+      (options) => {
+        expect(() => new Dexcom(options as unknown as DexcomOptions)).toThrow(
+          ArgumentErrorEnum.USER_ID_REQUIRED,
+        );
+      },
+    );
 
     test("throws USER_ID_MULTIPLE with both username and accountId", () => {
       expect(
@@ -502,7 +521,7 @@ describe("Dexcom constructor", () => {
           password: "pass",
         });
       } catch (e) {
-        expect(e.enum).toBe(ArgumentErrorEnum.USER_ID_MULTIPLE);
+        expect((e as DexcomError).enum).toBe(ArgumentErrorEnum.USER_ID_MULTIPLE);
       }
     });
 
@@ -512,17 +531,17 @@ describe("Dexcom constructor", () => {
           new Dexcom({
             username: "user",
             password: "pass",
-            region: "invalid",
+            region: "invalid" as Region,
           }),
       ).toThrow(ArgumentError);
       try {
         new Dexcom({
           username: "user",
           password: "pass",
-          region: "invalid",
+          region: "invalid" as Region,
         });
       } catch (e) {
-        expect(e.enum).toBe(ArgumentErrorEnum.REGION_INVALID);
+        expect((e as DexcomError).enum).toBe(ArgumentErrorEnum.REGION_INVALID);
       }
     });
   });
@@ -561,7 +580,7 @@ describe("Dexcom constructor", () => {
 // =============================================================================
 
 describe("Dexcom._handleErrorCode", () => {
-  let dexcom;
+  let dexcom: Dexcom;
 
   beforeEach(() => {
     dexcom = new Dexcom({ username: "user", password: "pass" });
@@ -678,7 +697,7 @@ describe("Dexcom._handleErrorCode", () => {
 // =============================================================================
 
 describe("Dexcom._post", () => {
-  let dexcom;
+  let dexcom: Dexcom;
 
   beforeEach(() => {
     dexcom = createAuthenticatedDexcom();
@@ -688,6 +707,17 @@ describe("Dexcom._post", () => {
     mockFetch.mockReturnValueOnce(mockResponse({ result: "ok" }));
     const result = await dexcom._post("TestEndpoint", null, { key: "val" });
     expect(result).toEqual({ result: "ok" });
+  });
+
+  test("reports a redirect even if discarding its body fails", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 302,
+      body: { cancel: () => Promise.reject(new Error("cancel failed")) },
+    });
+    await expect(dexcom._post("TestEndpoint")).rejects.toThrow(
+      ServerErrorEnum.REDIRECT,
+    );
   });
 
   test("sends POST with correct headers", async () => {
@@ -708,7 +738,7 @@ describe("Dexcom._post", () => {
   test("appends query params when provided", async () => {
     mockFetch.mockReturnValueOnce(mockResponse("ok"));
     await dexcom._post("TestEndpoint", { sessionId: "abc", minutes: 10 });
-    const calledUrl = mockFetch.mock.calls[0][0];
+    const calledUrl = mockFetch.mock.calls[0]![0];
     expect(calledUrl).toContain("?");
     expect(calledUrl).toContain("sessionId=abc");
     expect(calledUrl).toContain("minutes=10");
@@ -717,14 +747,14 @@ describe("Dexcom._post", () => {
   test("no query string when params is null", async () => {
     mockFetch.mockReturnValueOnce(mockResponse("ok"));
     await dexcom._post("TestEndpoint", null, {});
-    const calledUrl = mockFetch.mock.calls[0][0];
+    const calledUrl = mockFetch.mock.calls[0]![0];
     expect(calledUrl).not.toContain("?");
   });
 
   test("sends empty JSON body when json is null", async () => {
     mockFetch.mockReturnValueOnce(mockResponse("ok"));
     await dexcom._post("TestEndpoint");
-    const calledBody = mockFetch.mock.calls[0][1].body;
+    const calledBody = mockFetch.mock.calls[0]![1].body;
     expect(calledBody).toBe("{}");
   });
 
@@ -737,7 +767,7 @@ describe("Dexcom._post", () => {
       );
       await dexcom._post("TestEndpoint");
     } catch (e) {
-      expect(e.enum).toBe(ServerErrorEnum.UNEXPECTED);
+      expect((e as DexcomError).enum).toBe(ServerErrorEnum.UNEXPECTED);
     }
   });
 
@@ -748,7 +778,7 @@ describe("Dexcom._post", () => {
       mockFetch.mockReturnValueOnce(mockJsonError());
       await dexcom._post("TestEndpoint");
     } catch (e) {
-      expect(e.enum).toBe(ServerErrorEnum.INVALID_JSON);
+      expect((e as DexcomError).enum).toBe(ServerErrorEnum.INVALID_JSON);
     }
   });
 
@@ -818,7 +848,7 @@ describe("Dexcom.createSession", () => {
 
     await dexcom.createSession();
 
-    const authCall = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const authCall = JSON.parse(mockFetch.mock.calls[0]![1].body);
     expect(authCall.accountName).toBe("myuser");
     expect(authCall.password).toBe("mypass");
     expect(authCall.applicationId).toBeDefined();
@@ -830,7 +860,7 @@ describe("Dexcom.createSession", () => {
 
     await dexcom.createSession();
 
-    const loginCall = JSON.parse(mockFetch.mock.calls[1][1].body);
+    const loginCall = JSON.parse(mockFetch.mock.calls[1]![1].body);
     expect(loginCall.accountId).toBe(VALID_ACCOUNT_ID);
     expect(loginCall.password).toBe("mypass");
     expect(loginCall.applicationId).toBeDefined();
@@ -846,7 +876,7 @@ describe("Dexcom.createSession", () => {
 
     await dexcom.createSession();
 
-    const authCall = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const authCall = JSON.parse(mockFetch.mock.calls[0]![1].body);
     expect(authCall.applicationId).toBe(
       "d8665ade-9673-4e27-9ff6-92db4ce13d13",
     );
@@ -862,7 +892,7 @@ describe("Dexcom.createSession", () => {
 
     await dexcom.createSession();
 
-    expect(mockFetch.mock.calls[0][0]).toContain("shareous1.dexcom.com");
+    expect(mockFetch.mock.calls[0]![0]).toContain("shareous1.dexcom.com");
   });
 
   test("throws ArgumentError PASSWORD_INVALID if password is empty", async () => {
@@ -872,7 +902,7 @@ describe("Dexcom.createSession", () => {
     try {
       await dexcom.createSession();
     } catch (e) {
-      expect(e.enum).toBe(ArgumentErrorEnum.PASSWORD_INVALID);
+      expect((e as DexcomError).enum).toBe(ArgumentErrorEnum.PASSWORD_INVALID);
     }
   });
 
@@ -886,7 +916,7 @@ describe("Dexcom.createSession", () => {
       dexcom._accountId = null;
       await dexcom.createSession();
     } catch (e) {
-      expect(e.enum).toBe(ArgumentErrorEnum.USERNAME_INVALID);
+      expect((e as DexcomError).enum).toBe(ArgumentErrorEnum.USERNAME_INVALID);
     }
   });
 
@@ -905,7 +935,7 @@ describe("Dexcom.createSession", () => {
       mockFetch.mockReturnValueOnce(mockResponse(DEFAULT_UUID));
       await dexcom.createSession();
     } catch (e) {
-      expect(e.enum).toBe(ArgumentErrorEnum.ACCOUNT_ID_DEFAULT);
+      expect((e as DexcomError).enum).toBe(ArgumentErrorEnum.ACCOUNT_ID_DEFAULT);
     }
   });
 
@@ -930,7 +960,7 @@ describe("Dexcom.createSession", () => {
         .mockReturnValueOnce(mockResponse(DEFAULT_UUID));
       await dexcom.createSession();
     } catch (e) {
-      expect(e.enum).toBe(ArgumentErrorEnum.SESSION_ID_DEFAULT);
+      expect((e as DexcomError).enum).toBe(ArgumentErrorEnum.SESSION_ID_DEFAULT);
     }
   });
 });
@@ -950,8 +980,8 @@ describe("Dexcom.getGlucoseReadings", () => {
       const readings = await dexcom.getGlucoseReadings(1440, 288);
       expect(readings).toHaveLength(2);
       expect(readings[0]).toBeInstanceOf(GlucoseReading);
-      expect(readings[0].value).toBe(120);
-      expect(readings[1].value).toBe(85);
+      expect(readings[0]!.value).toBe(120);
+      expect(readings[1]!.value).toBe(85);
     });
 
     test("returns empty array when API returns empty list", async () => {
@@ -967,7 +997,7 @@ describe("Dexcom.getGlucoseReadings", () => {
       mockFetch.mockReturnValueOnce(mockResponse([]));
 
       await dexcom.getGlucoseReadings();
-      const calledUrl = mockFetch.mock.calls[0][0];
+      const calledUrl = mockFetch.mock.calls[0]![0];
       expect(calledUrl).toContain(`minutes=${MAX_MINUTES}`);
       expect(calledUrl).toContain(`maxCount=${MAX_MAX_COUNT}`);
     });
@@ -977,7 +1007,7 @@ describe("Dexcom.getGlucoseReadings", () => {
       mockFetch.mockReturnValueOnce(mockResponse([]));
 
       await dexcom.getGlucoseReadings(15, 3);
-      const calledUrl = mockFetch.mock.calls[0][0];
+      const calledUrl = mockFetch.mock.calls[0]![0];
       expect(calledUrl).toContain("minutes=15");
       expect(calledUrl).toContain("maxCount=3");
     });
@@ -987,13 +1017,13 @@ describe("Dexcom.getGlucoseReadings", () => {
       mockFetch.mockReturnValueOnce(mockResponse([]));
 
       await dexcom.getGlucoseReadings();
-      const calledUrl = mockFetch.mock.calls[0][0];
+      const calledUrl = mockFetch.mock.calls[0]![0];
       expect(calledUrl).toContain(`sessionId=${VALID_SESSION_ID}`);
     });
   });
 
   describe("parameter validation", () => {
-    let dexcom;
+    let dexcom: Dexcom;
     beforeEach(() => {
       dexcom = createAuthenticatedDexcom();
     });
@@ -1146,6 +1176,23 @@ describe("Dexcom.getGlucoseReadings", () => {
       expect(readings).toHaveLength(1);
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });
+
+    test("recreates a session whose stored ID is the default UUID", async () => {
+      const dexcom = createAuthenticatedDexcom();
+      dexcom._sessionId = DEFAULT_UUID;
+
+      // createSession (login only) + glucose readings
+      mockFetch
+        .mockReturnValueOnce(mockResponse(VALID_SESSION_ID))
+        .mockReturnValueOnce(mockResponse([sampleGlucoseJson()]));
+
+      const readings = await dexcom.getGlucoseReadings(10, 1);
+      expect(readings).toHaveLength(1);
+      expect(dexcom._sessionId).toBe(VALID_SESSION_ID);
+      expect(mockFetch.mock.calls[1]![0]).toContain(
+        `sessionId=${VALID_SESSION_ID}`,
+      );
+    });
   });
 });
 
@@ -1162,9 +1209,9 @@ describe("Dexcom.getLatestGlucoseReading", () => {
 
     const reading = await dexcom.getLatestGlucoseReading();
     expect(reading).toBeInstanceOf(GlucoseReading);
-    expect(reading.value).toBe(95);
+    expect(reading!.value).toBe(95);
 
-    const calledUrl = mockFetch.mock.calls[0][0];
+    const calledUrl = mockFetch.mock.calls[0]![0];
     expect(calledUrl).toContain("minutes=5");
     expect(calledUrl).toContain("maxCount=1");
   });
@@ -1194,7 +1241,7 @@ describe("Dexcom.getLatestGlucoseReadings", () => {
     const result = await dexcom.getLatestGlucoseReadings();
     expect(result).toHaveLength(2);
 
-    const calledUrl = mockFetch.mock.calls[0][0];
+    const calledUrl = mockFetch.mock.calls[0]![0];
     expect(calledUrl).toContain(`minutes=${MAX_MINUTES}`);
     expect(calledUrl).toContain(`maxCount=${MAX_MAX_COUNT}`);
   });
@@ -1208,7 +1255,7 @@ describe("Dexcom.getLatestGlucoseReadings", () => {
     const result = await dexcom.getLatestGlucoseReadings(1);
     expect(result).toHaveLength(1);
 
-    const calledUrl = mockFetch.mock.calls[0][0];
+    const calledUrl = mockFetch.mock.calls[0]![0];
     expect(calledUrl).toContain(`minutes=${MAX_MINUTES}`);
     expect(calledUrl).toContain("maxCount=1");
   });
@@ -1235,9 +1282,9 @@ describe("Dexcom.getCurrentGlucoseReading", () => {
 
     const reading = await dexcom.getCurrentGlucoseReading();
     expect(reading).toBeInstanceOf(GlucoseReading);
-    expect(reading.value).toBe(88);
+    expect(reading!.value).toBe(88);
 
-    const calledUrl = mockFetch.mock.calls[0][0];
+    const calledUrl = mockFetch.mock.calls[0]![0];
     expect(calledUrl).toContain("minutes=10");
     expect(calledUrl).toContain("maxCount=1");
   });
@@ -1257,6 +1304,6 @@ describe("Dexcom.getCurrentGlucoseReading", () => {
 
 describe("module exports", () => {
   test("re-exports Region from constants", () => {
-    expect(Region).toBe(require("../constants").Region);
+    expect(Region).toBe(ConstantsRegion);
   });
 });

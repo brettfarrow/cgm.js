@@ -1,11 +1,13 @@
-const http = require("node:http");
-const { Dexcom } = require("../cgm");
-const { ServerErrorEnum } = require("../errors");
+import { describe, test, expect, beforeAll, afterAll } from "vitest";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import { Dexcom } from "../src/cgm.js";
+import { ServerErrorEnum } from "../src/errors.js";
 
 describe("native fetch transport", () => {
-  let server;
-  let baseUrl;
-  let redirectedRequests;
+  let server: http.Server;
+  let baseUrl: string;
+  let redirectedRequests: number;
 
   beforeAll(async () => {
     redirectedRequests = 0;
@@ -22,12 +24,13 @@ describe("native fetch transport", () => {
       }
       // /stalled-headers deliberately never sends a response.
     });
-    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-    baseUrl = `http://127.0.0.1:${server.address().port}/`;
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    baseUrl = `http://127.0.0.1:${port}/`;
   });
 
   afterAll(async () => {
-    const closed = new Promise((resolve) => server.close(resolve));
+    const closed = new Promise<void>((resolve) => server.close(() => resolve()));
     server.closeAllConnections();
     await closed;
   });

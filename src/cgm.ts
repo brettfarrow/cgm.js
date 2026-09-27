@@ -1,4 +1,4 @@
-const {
+import {
   Region,
   DEXCOM_APPLICATION_IDS,
   DEXCOM_BASE_URLS,
@@ -13,9 +13,11 @@ const {
   MAX_MINUTES,
   MAX_MAX_COUNT,
   MMOL_L_CONVERSION_FACTOR,
-} = require("./constants.js");
+  type Trend,
+  type TrendDirection,
+} from "./constants.js";
 
-const {
+import {
   AccountError,
   AccountErrorEnum,
   ArgumentError,
@@ -24,25 +26,51 @@ const {
   SessionErrorEnum,
   ServerError,
   ServerErrorEnum,
-} = require("./errors.js");
+  type DexcomError,
+} from "./errors.js";
+
+export { Region };
+
+/** A raw glucose reading as returned by the Dexcom Share API. */
+export interface GlucoseReadingJson {
+  WT?: string;
+  ST?: string;
+  DT: string;
+  Value: number | string;
+  Trend: TrendDirection | Trend;
+}
+
+export interface DexcomOptions {
+  password: string;
+  username?: string | null;
+  accountId?: string | null;
+  region?: Region;
+  requestTimeout?: number;
+}
 
 const TREND_NAMES = Object.freeze(
   Object.fromEntries(
     Object.entries(DEXCOM_TREND_DIRECTIONS).map(([name, code]) => [code, name]),
-  ),
+  ) as Record<number, TrendDirection>,
 );
 
-function validUuid(uuid) {
+function validUuid(uuid: unknown): uuid is string {
   if (typeof uuid !== "string") return false;
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
     uuid,
   );
 }
 
-class GlucoseReading {
-  constructor(jsonGlucoseReading) {
+export class GlucoseReading {
+  private readonly _value: number;
+  private readonly _trend: Trend;
+  private readonly _trendDirection: TrendDirection;
+  private readonly _time: Date;
+  private readonly _json: GlucoseReadingJson;
+
+  constructor(jsonGlucoseReading: GlucoseReadingJson) {
     try {
-      const value = jsonGlucoseReading.Value;
+      const value: unknown = jsonGlucoseReading.Value;
       if (
         typeof value !== "number" &&
         !(typeof value === "string" && /^\d+$/.test(value))
@@ -50,23 +78,24 @@ class GlucoseReading {
         throw new Error("Invalid glucose value");
       }
       this._value = Number(value);
-      this._trendDirection = jsonGlucoseReading.Trend;
+      const trendDirection: unknown = jsonGlucoseReading.Trend;
 
       // Dexcom Share returns string directions; older responses used integer codes.
-      if (typeof this._trendDirection === "string") {
-        if (!Object.hasOwn(DEXCOM_TREND_DIRECTIONS, this._trendDirection)) {
+      if (typeof trendDirection === "string") {
+        if (!Object.hasOwn(DEXCOM_TREND_DIRECTIONS, trendDirection)) {
           throw new Error("Invalid trend");
         }
+        this._trendDirection = trendDirection as TrendDirection;
         this._trend = DEXCOM_TREND_DIRECTIONS[this._trendDirection];
       } else {
         if (
-          !Number.isInteger(this._trendDirection) ||
-          !Object.hasOwn(TREND_NAMES, this._trendDirection)
+          !Number.isInteger(trendDirection) ||
+          !Object.hasOwn(TREND_NAMES, trendDirection as number)
         ) {
           throw new Error("Invalid trend");
         }
-        this._trend = this._trendDirection;
-        this._trendDirection = TREND_NAMES[this._trend];
+        this._trend = trendDirection as Trend;
+        this._trendDirection = TREND_NAMES[this._trend]!;
       }
 
       if (!Number.isSafeInteger(this._value) || this._value < 0) {
@@ -75,62 +104,80 @@ class GlucoseReading {
 
       const match = jsonGlucoseReading.DT.match(/Date\((\d+)([+-]\d{4})\)/);
       if (match) {
-        this._time = new Date(parseInt(match[1], 10));
+        this._time = new Date(parseInt(match[1]!, 10));
         if (Number.isNaN(this._time.getTime())) {
           throw new Error("Invalid date");
         }
       } else {
         throw new Error("Invalid date format");
       }
-    } catch (error) {
-      if (error instanceof ArgumentError) throw error;
+    } catch {
       throw new ArgumentError(ArgumentErrorEnum.GLUCOSE_READING_INVALID);
     }
 
     this._json = jsonGlucoseReading;
   }
 
-  get value() {
+  get value(): number {
     return this._value;
   }
-  get mgdL() {
+  get mgdL(): number {
     return this._value;
   }
-  get mmolL() {
+  get mmolL(): number {
     return parseFloat((this._value * MMOL_L_CONVERSION_FACTOR).toFixed(1));
   }
-  get trend() {
+  get trend(): Trend {
     return this._trend;
   }
-  get trendDirection() {
+  get trendDirection(): TrendDirection {
     return this._trendDirection;
   }
-  get trendDescription() {
+  get trendDescription(): string {
     return TREND_DESCRIPTIONS[this._trend];
   }
-  get trendArrow() {
+  get trendArrow(): string {
     return TREND_ARROWS[this._trend];
   }
-  get time() {
+  get time(): Date {
     return this._time;
   }
-  get json() {
+  get json(): GlucoseReadingJson {
     return this._json;
   }
 
-  toString() {
+  toString(): string {
     return String(this._value);
   }
 }
 
-class Dexcom {
-  constructor({
-    password,
-    username = null,
-    accountId = null,
-    region = Region.US,
-    requestTimeout = 30000,
-  } = {}) {
+export class Dexcom {
+  /** @internal */
+  _baseUrl: string;
+  /** @internal */
+  _applicationId: string;
+  /** @internal */
+  _password: string;
+  /** @internal */
+  _username: string | null;
+  /** @internal */
+  _accountId: string | null;
+  /** @internal */
+  _sessionId: string | null;
+  /** @internal */
+  _sessionPromise: Promise<void> | null;
+  /** @internal */
+  _requestTimeout: number;
+
+  constructor(options: DexcomOptions) {
+    // JavaScript callers may omit options; let validation report what is missing.
+    const {
+      password,
+      username = null,
+      accountId = null,
+      region = Region.US,
+      requestTimeout = 30000,
+    } = options ?? ({} as DexcomOptions);
     this._validateRegion(region);
     this._validateUserIds(accountId, username);
     if (
@@ -151,23 +198,31 @@ class Dexcom {
     this._requestTimeout = requestTimeout;
   }
 
-  get username() {
+  get username(): string | null {
     return this._username;
   }
-  get accountId() {
+  get accountId(): string | null {
     return this._accountId;
   }
 
-  async _post(endpoint, params = null, json = null) {
+  /** @internal */
+  async _post(
+    endpoint: string,
+    params: Record<string, string | number | null> | null = null,
+    json: Record<string, unknown> | null = null,
+  ): Promise<unknown> {
     const url = `${this._baseUrl}${endpoint}`;
 
     let queryString = "";
     if (params) {
-      queryString = "?" + new URLSearchParams(params).toString();
+      const stringParams = Object.entries(params).map(
+        ([key, value]) => [key, String(value)] as [string, string],
+      );
+      queryString = "?" + new URLSearchParams(stringParams).toString();
     }
 
     const signal = AbortSignal.timeout(this._requestTimeout);
-    let response;
+    let response: Response;
     try {
       response = await fetch(`${url}${queryString}`, {
         method: "POST",
@@ -177,7 +232,7 @@ class Dexcom {
         redirect: "manual",
         signal,
       });
-    } catch (error) {
+    } catch {
       if (signal.aborted) throw new ServerError(ServerErrorEnum.TIMEOUT);
       throw new ServerError(ServerErrorEnum.UNEXPECTED);
     }
@@ -187,10 +242,10 @@ class Dexcom {
       throw new ServerError(ServerErrorEnum.REDIRECT);
     }
 
-    let responseJson;
+    let responseJson: unknown;
     try {
       responseJson = await response.json();
-    } catch (error) {
+    } catch {
       if (signal.aborted) throw new ServerError(ServerErrorEnum.TIMEOUT);
       throw new ServerError(ServerErrorEnum.INVALID_JSON);
     }
@@ -202,9 +257,11 @@ class Dexcom {
     return responseJson;
   }
 
-  _handleErrorCode(json) {
-    const code = typeof json?.Code === "string" ? json.Code : "";
-    const message = typeof json?.Message === "string" ? json.Message : "";
+  /** @internal */
+  _handleErrorCode(json: unknown): DexcomError {
+    const body = json as { Code?: unknown; Message?: unknown } | null;
+    const code = typeof body?.Code === "string" ? body.Code : "";
+    const message = typeof body?.Message === "string" ? body.Message : "";
 
     if (code === "SessionIdNotFound") {
       return new SessionError(SessionErrorEnum.NOT_FOUND);
@@ -244,13 +301,15 @@ class Dexcom {
     return new ServerError(ServerErrorEnum.UNEXPECTED);
   }
 
-  _validateRegion(region) {
-    if (!Object.values(Region).includes(region)) {
+  /** @internal */
+  _validateRegion(region: unknown): asserts region is Region {
+    if (!Object.values(Region).includes(region as Region)) {
       throw new ArgumentError(ArgumentErrorEnum.REGION_INVALID);
     }
   }
 
-  _validateUserIds(accountId, username) {
+  /** @internal */
+  _validateUserIds(accountId: unknown, username: unknown): void {
     const provided = [accountId, username].filter((id) => id != null).length;
     if (provided === 0) {
       throw new ArgumentError(ArgumentErrorEnum.USER_ID_REQUIRED);
@@ -260,7 +319,8 @@ class Dexcom {
     }
   }
 
-  _validateSessionId(sessionId) {
+  /** @internal */
+  _validateSessionId(sessionId: unknown): asserts sessionId is string {
     if (!validUuid(sessionId)) {
       throw new ArgumentError(ArgumentErrorEnum.SESSION_ID_INVALID);
     }
@@ -269,19 +329,22 @@ class Dexcom {
     }
   }
 
-  _validateUsername() {
+  /** @internal */
+  _validateUsername(): void {
     if (!this._username || typeof this._username !== "string") {
       throw new ArgumentError(ArgumentErrorEnum.USERNAME_INVALID);
     }
   }
 
-  _validatePassword() {
+  /** @internal */
+  _validatePassword(): void {
     if (!this._password || typeof this._password !== "string") {
       throw new ArgumentError(ArgumentErrorEnum.PASSWORD_INVALID);
     }
   }
 
-  _validateAccountId(accountId) {
+  /** @internal */
+  _validateAccountId(accountId: unknown): asserts accountId is string {
     if (!validUuid(accountId)) {
       throw new ArgumentError(ArgumentErrorEnum.ACCOUNT_ID_INVALID);
     }
@@ -290,7 +353,7 @@ class Dexcom {
     }
   }
 
-  async createSession() {
+  async createSession(): Promise<void> {
     if (!this._sessionPromise) {
       this._sessionPromise = this._createSession().finally(() => {
         this._sessionPromise = null;
@@ -299,7 +362,8 @@ class Dexcom {
     await this._sessionPromise;
   }
 
-  async _createSession() {
+  /** @internal */
+  async _createSession(): Promise<void> {
     this._validatePassword();
 
     if (this._accountId == null) {
@@ -329,7 +393,10 @@ class Dexcom {
     this._sessionId = sessionId;
   }
 
-  async getGlucoseReadings(minutes = MAX_MINUTES, maxCount = MAX_MAX_COUNT) {
+  async getGlucoseReadings(
+    minutes: number = MAX_MINUTES,
+    maxCount: number = MAX_MAX_COUNT,
+  ): Promise<GlucoseReading[]> {
     if (!Number.isInteger(minutes) || minutes < 1 || minutes > MAX_MINUTES) {
       throw new ArgumentError(ArgumentErrorEnum.MINUTES_INVALID);
     }
@@ -341,7 +408,7 @@ class Dexcom {
       throw new ArgumentError(ArgumentErrorEnum.MAX_COUNT_INVALID);
     }
 
-    let jsonGlucoseReadings;
+    let jsonGlucoseReadings: unknown;
     const sessionId = this._sessionId;
     try {
       this._validateSessionId(sessionId);
@@ -377,23 +444,23 @@ class Dexcom {
     }
 
     return jsonGlucoseReadings.map(
-      (jsonReading) => new GlucoseReading(jsonReading),
+      (jsonReading: GlucoseReadingJson) => new GlucoseReading(jsonReading),
     );
   }
 
-  async getLatestGlucoseReading() {
+  async getLatestGlucoseReading(): Promise<GlucoseReading | null> {
     const readings = await this.getGlucoseReadings(5, 1);
-    return readings.length > 0 ? readings[0] : null;
+    return readings.length > 0 ? readings[0]! : null;
   }
 
-  async getLatestGlucoseReadings(maxCount = MAX_MAX_COUNT) {
+  async getLatestGlucoseReadings(
+    maxCount: number = MAX_MAX_COUNT,
+  ): Promise<GlucoseReading[]> {
     return this.getGlucoseReadings(MAX_MINUTES, maxCount);
   }
 
-  async getCurrentGlucoseReading() {
+  async getCurrentGlucoseReading(): Promise<GlucoseReading | null> {
     const readings = await this.getGlucoseReadings(10, 1);
-    return readings.length > 0 ? readings[0] : null;
+    return readings.length > 0 ? readings[0]! : null;
   }
 }
-
-module.exports = { Dexcom, GlucoseReading, Region };

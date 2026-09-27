@@ -1,10 +1,10 @@
-const { Dexcom, Region } = require("./cgm");
+import { Dexcom } from "cgm.js";
 
-async function main() {
+async function main(): Promise<void> {
   // US account (default)
   const dexcom = new Dexcom({
-    username: process.env.DEXCOM_USERNAME,
-    password: process.env.DEXCOM_PASSWORD,
+    username: process.env.DEXCOM_USERNAME ?? null,
+    password: process.env.DEXCOM_PASSWORD ?? "",
   });
 
   // Outside US: new Dexcom({ username: "user", password: "pass", region: Region.OUS })
@@ -27,7 +27,7 @@ async function main() {
   console.log("Glucose readings:", glucoseReadings);
 }
 
-main().catch((error) => {
-  console.error(error.message);
+main().catch((error: unknown) => {
+  console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;
 });
