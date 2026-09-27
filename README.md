@@ -12,6 +12,24 @@ Node.js 18 or later.
 npm install cgm.js
 ```
 
+## Upgrading from v1 to v2
+
+Version 2.0.0 changes the runtime requirements and HTTP implementation:
+
+- **Node.js 18 or later is required**, up from Node.js 14. Update your local
+  runtime, CI configuration, and deployment environment before upgrading.
+- **Requests use the built-in global `fetch`.** The `isomorphic-fetch` dependency
+  and its automatic polyfill have been removed. Environments without global
+  `fetch` must supply their own compatible implementation.
+- **Tests that mock `isomorphic-fetch` must mock global `fetch` instead.** For
+  example, replace `jest.mock("isomorphic-fetch", () => mockFetch)` with
+  `jest.spyOn(globalThis, "fetch").mockImplementation(mockFetch)`, and restore
+  the spy after each test with `jest.restoreAllMocks()`.
+
+The v1 constructor options, exports, reading methods, and error classes are
+unchanged in the 2.0.0 release. Applications using the public API generally only
+need to update their runtime and any HTTP mocks.
+
 ## Quick Start
 
 ```js
