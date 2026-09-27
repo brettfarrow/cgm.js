@@ -30,6 +30,8 @@ const ServerErrorEnum = Object.freeze({
   UNKNOWN_CODE: "Unknown error code in server response",
   UNEXPECTED: "Unexpected server response",
   TIMEOUT: "Request timed out",
+  REDIRECT:
+    "Server responded with a redirect, which is not followed to protect credentials",
 });
 
 class DexcomError extends Error {

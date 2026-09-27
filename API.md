@@ -50,7 +50,7 @@ const dexcom = new Dexcom({ username, password, region });
 - Use `username` with your Dexcom account credentials (the account that *publishes* readings, not a follower).
 - Use `accountId` if you already know your account UUID (found in the URL after logging in at your region's Dexcom Account Management site).
 - The constructor does **not** create a session automatically. Sessions are created lazily on the first API call, or by calling `createSession()` explicitly.
-- All HTTP requests reject redirects and throw `ServerError` (`TIMEOUT`) when the configured timeout expires. Redirect failures throw `ServerError` (`UNEXPECTED`).
+- HTTP requests throw `ServerError` (`TIMEOUT`) when the configured timeout expires. Redirects are never followed, so credentials are not sent to another URL; a redirect response throws `ServerError` (`REDIRECT`).
 
 ---
 
@@ -178,8 +178,9 @@ Represents a single parsed glucose reading from the Dexcom Share API.
 Malformed readings throw `ArgumentError` (`GLUCOSE_READING_INVALID`). Values must
 be nonnegative safe integers or strings containing only decimal digits; partial
 numbers such as `"120mg"` and fractions are rejected. Timestamps must represent a
-valid JavaScript date. Trends must be strings or integers. Unknown strings map
-to trend code 0; unknown integers retain their code with direction `"None"`.
+valid JavaScript date. Trends must be one of the direction strings or integer
+codes 0-9 listed in [Trend Values](#trend-values); any other trend is rejected,
+matching pydexcom.
 
 #### Properties
 
@@ -286,6 +287,7 @@ Error enums are frozen objects whose values are the human-readable error message
 |-----|-------|
 | `INVALID_JSON` | `"Invalid or malformed JSON in server response"` |
 | `TIMEOUT` | `"Request timed out"` |
+| `REDIRECT` | `"Server responded with a redirect, which is not followed to protect credentials"` |
 | `UNKNOWN_CODE` | `"Unknown error code in server response"` |
 | `UNEXPECTED` | `"Unexpected server response"` |
 
@@ -341,7 +343,7 @@ Errors related to invalid arguments passed to cgm.js methods (bad minutes/maxCou
 
 ### ServerError
 
-Errors related to unexpected or malformed responses from the Dexcom Share API (invalid JSON, unknown error codes).
+Errors related to unexpected or malformed responses from the Dexcom Share API (invalid JSON, unknown error codes, redirects, timeouts).
 
 **Extends:** `DexcomError`
 

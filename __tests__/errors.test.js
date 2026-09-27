@@ -84,6 +84,16 @@ describe("ServerErrorEnum", () => {
     expect(ServerErrorEnum.UNEXPECTED).toBe("Unexpected server response");
   });
 
+  test("has TIMEOUT", () => {
+    expect(ServerErrorEnum.TIMEOUT).toBe("Request timed out");
+  });
+
+  test("has REDIRECT", () => {
+    expect(ServerErrorEnum.REDIRECT).toBe(
+      "Server responded with a redirect, which is not followed to protect credentials",
+    );
+  });
+
   test("is frozen", () => {
     expect(Object.isFrozen(ServerErrorEnum)).toBe(true);
   });

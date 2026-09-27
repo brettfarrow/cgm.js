@@ -95,7 +95,7 @@ describe("request and response hardening", () => {
     const dexcom = new Dexcom({ username: "user", password: "pass" });
     await dexcom.createSession();
     for (const [, options] of mockFetch.mock.calls) {
-      expect(options.redirect).toBe("error");
+      expect(options.redirect).toBe("manual");
       expect(options.signal).toBeInstanceOf(AbortSignal);
     }
   });
@@ -154,13 +154,10 @@ describe("request and response hardening", () => {
       .toThrow(ArgumentErrorEnum.GLUCOSE_READING_INVALID);
   });
 
-  test.each(["constructor", "__proto__", "toString"])("does not inherit trend %s", (Trend) => {
-    const reading = new GlucoseReading(sampleGlucoseJson({ Trend }));
-    expect(reading.trend).toBe(0);
-    expect(reading.trendArrow).toBe("");
-  });
-
-  test.each([undefined, null, {}, NaN, 1.5])("rejects malformed trend %p", (Trend) => {
+  test.each([
+    undefined, null, {}, NaN, 1.5, [4], "4", -1, 10, 99,
+    "Unknown", "constructor", "__proto__", "toString",
+  ])("rejects malformed or unknown trend %p", (Trend) => {
     expect(() => new GlucoseReading(sampleGlucoseJson({ Trend })))
       .toThrow(ArgumentErrorEnum.GLUCOSE_READING_INVALID);
   });
@@ -195,6 +192,33 @@ describe("concurrent authentication", () => {
       .mockImplementation(() => mockResponse([sampleGlucoseJson()]));
     await Promise.all([dexcom.getGlucoseReadings(), dexcom.getGlucoseReadings()]);
     expect(mockFetch).toHaveBeenCalledTimes(5);
+  });
+
+  test("a late expired-session response waits for an in-progress refresh", async () => {
+    const dexcom = createAuthenticatedDexcom();
+    let releaseFirst;
+    let releaseLogin;
+    const secondSession = "22222222-3333-4444-5555-666666666666";
+    const thirdSession = "33333333-4444-5555-6666-777777777777";
+    mockFetch
+      .mockReturnValueOnce(new Promise((resolve) => { releaseFirst = resolve; }))
+      .mockReturnValueOnce(mockResponse({ Code: "SessionNotValid" }, { ok: false }))
+      .mockReturnValueOnce(mockResponse(secondSession))
+      .mockReturnValueOnce(mockResponse([sampleGlucoseJson()]))
+      .mockReturnValueOnce(mockResponse({ Code: "SessionNotValid" }, { ok: false }))
+      .mockReturnValueOnce(new Promise((resolve) => { releaseLogin = resolve; }))
+      .mockImplementation(() => mockResponse([sampleGlucoseJson()]));
+    const first = dexcom.getGlucoseReadings();
+    await dexcom.getGlucoseReadings(); // refreshes to secondSession
+    const third = dexcom.getGlucoseReadings(); // secondSession expires; refresh pending
+    await new Promise((resolve) => setImmediate(resolve));
+    releaseFirst(await mockResponse({ Code: "SessionNotValid" }, { ok: false }));
+    await new Promise((resolve) => setImmediate(resolve));
+    releaseLogin(await mockResponse(thirdSession));
+    await Promise.all([first, third]);
+    expect(mockFetch).toHaveBeenCalledTimes(8);
+    const retries = mockFetch.mock.calls.slice(6).map(([url]) => url);
+    expect(retries.every((url) => url.includes(`sessionId=${thirdSession}`))).toBe(true);
   });
 
   test("a late expired-session response reuses the refreshed session", async () => {
@@ -284,10 +308,11 @@ describe("GlucoseReading", () => {
       expect(reading.trendDirection).toBe("Flat");
     });
 
-    test("resolves unknown numeric trend to None", () => {
-      const reading = new GlucoseReading(sampleGlucoseJson({ Trend: 99 }));
-      expect(reading.trend).toBe(99);
+    test("resolves numeric trend 0 to None", () => {
+      const reading = new GlucoseReading(sampleGlucoseJson({ Trend: 0 }));
+      expect(reading.trend).toBe(0);
       expect(reading.trendDirection).toBe("None");
+      expect(reading.trendArrow).toBe("");
     });
   });
 

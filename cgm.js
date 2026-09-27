@@ -52,16 +52,21 @@ class GlucoseReading {
       this._value = Number(value);
       this._trendDirection = jsonGlucoseReading.Trend;
 
+      // Dexcom Share returns string directions; older responses used integer codes.
       if (typeof this._trendDirection === "string") {
-        this._trend = Object.hasOwn(DEXCOM_TREND_DIRECTIONS, this._trendDirection)
-          ? DEXCOM_TREND_DIRECTIONS[this._trendDirection]
-          : 0;
+        if (!Object.hasOwn(DEXCOM_TREND_DIRECTIONS, this._trendDirection)) {
+          throw new Error("Invalid trend");
+        }
+        this._trend = DEXCOM_TREND_DIRECTIONS[this._trendDirection];
       } else {
-        if (!Number.isInteger(this._trendDirection)) {
+        if (
+          !Number.isInteger(this._trendDirection) ||
+          !Object.hasOwn(TREND_NAMES, this._trendDirection)
+        ) {
           throw new Error("Invalid trend");
         }
         this._trend = this._trendDirection;
-        this._trendDirection = TREND_NAMES[this._trend] || "None";
+        this._trendDirection = TREND_NAMES[this._trend];
       }
 
       if (!Number.isSafeInteger(this._value) || this._value < 0) {
@@ -168,12 +173,18 @@ class Dexcom {
         method: "POST",
         headers: HEADERS,
         body: JSON.stringify(json || {}),
-        redirect: "error",
+        // Follow no redirects so credentials are never sent to another URL.
+        redirect: "manual",
         signal,
       });
     } catch (error) {
       if (signal.aborted) throw new ServerError(ServerErrorEnum.TIMEOUT);
       throw new ServerError(ServerErrorEnum.UNEXPECTED);
+    }
+
+    if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel().catch(() => {});
+      throw new ServerError(ServerErrorEnum.REDIRECT);
     }
 
     let responseJson;
@@ -345,9 +356,12 @@ class Dexcom {
           (error.enum === ArgumentErrorEnum.SESSION_ID_INVALID ||
             error.enum === ArgumentErrorEnum.SESSION_ID_DEFAULT))
       ) {
-        // A concurrent request may already have replaced the expired session.
+        // A concurrent request may already have replaced the expired session,
+        // and may still be replacing it again.
         if (this._sessionId === sessionId) {
           await this.createSession();
+        } else if (this._sessionPromise) {
+          await this._sessionPromise;
         }
         jsonGlucoseReadings = await this._post(
           DEXCOM_GLUCOSE_READINGS_ENDPOINT,

@@ -118,7 +118,8 @@ const dexcom = new Dexcom({
 ```
 
 Timeouts throw `ServerError` with `ServerErrorEnum.TIMEOUT`. HTTP redirects are
-rejected to prevent forwarding credentials to another destination. Concurrent
+never followed, to prevent forwarding credentials to another destination; they
+throw `ServerError` with `ServerErrorEnum.REDIRECT`. Concurrent
 calls on the same client share session creation; expired sessions are refreshed
 with at most one retry per reading request.
 

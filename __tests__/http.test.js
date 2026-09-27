@@ -44,7 +44,7 @@ describe("native fetch transport", () => {
 
   test("does not forward a POST body to a redirect destination", async () => {
     await expect(client()._post("redirect", null, { password: "testpass" }))
-      .rejects.toThrow(ServerErrorEnum.UNEXPECTED);
+      .rejects.toThrow(ServerErrorEnum.REDIRECT);
     expect(redirectedRequests).toBe(0);
   });
 
