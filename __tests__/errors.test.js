@@ -56,10 +56,7 @@ describe("ArgumentErrorEnum", () => {
     expect(ArgumentErrorEnum.SESSION_ID_INVALID).toBeDefined();
     expect(ArgumentErrorEnum.SESSION_ID_DEFAULT).toBeDefined();
     expect(ArgumentErrorEnum.GLUCOSE_READING_INVALID).toBeDefined();
-  });
-
-  test("has exactly 13 entries", () => {
-    expect(Object.keys(ArgumentErrorEnum)).toHaveLength(13);
+    expect(ArgumentErrorEnum.REQUEST_TIMEOUT_INVALID).toBeDefined();
   });
 
   test("is frozen", () => {

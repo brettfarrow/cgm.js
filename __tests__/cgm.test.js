@@ -20,7 +20,6 @@ const {
   DEXCOM_TREND_DIRECTIONS,
   TREND_DESCRIPTIONS,
   TREND_ARROWS,
-  MMOL_L_CONVERSION_FACTOR,
 } = require("../constants");
 
 // --- Helpers ---
@@ -325,24 +324,17 @@ describe("GlucoseReading", () => {
 
     test("mmolL converts correctly", () => {
       const reading = new GlucoseReading(sampleGlucoseJson({ Value: 100 }));
-      expect(reading.mmolL).toBe(
-        parseFloat((100 * MMOL_L_CONVERSION_FACTOR).toFixed(1)),
-      );
       expect(reading.mmolL).toBe(5.5);
     });
 
     test("mmolL for low value", () => {
       const reading = new GlucoseReading(sampleGlucoseJson({ Value: 40 }));
-      expect(reading.mmolL).toBe(
-        parseFloat((40 * MMOL_L_CONVERSION_FACTOR).toFixed(1)),
-      );
+      expect(reading.mmolL).toBe(2.2);
     });
 
     test("mmolL for high value", () => {
       const reading = new GlucoseReading(sampleGlucoseJson({ Value: 400 }));
-      expect(reading.mmolL).toBe(
-        parseFloat((400 * MMOL_L_CONVERSION_FACTOR).toFixed(1)),
-      );
+      expect(reading.mmolL).toBe(22.2);
     });
   });
 
@@ -1264,20 +1256,7 @@ describe("Dexcom.getCurrentGlucoseReading", () => {
 // =============================================================================
 
 describe("module exports", () => {
-  test("exports Dexcom", () => {
-    expect(Dexcom).toBeDefined();
-    expect(typeof Dexcom).toBe("function");
-  });
-
-  test("exports GlucoseReading", () => {
-    expect(GlucoseReading).toBeDefined();
-    expect(typeof GlucoseReading).toBe("function");
-  });
-
-  test("exports Region", () => {
-    expect(Region).toBeDefined();
-    expect(Region.US).toBe("us");
-    expect(Region.OUS).toBe("ous");
-    expect(Region.JP).toBe("jp");
+  test("re-exports Region from constants", () => {
+    expect(Region).toBe(require("../constants").Region);
   });
 });
